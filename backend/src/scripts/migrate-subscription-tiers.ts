@@ -23,7 +23,7 @@ async function migrateSubscriptionTiers() {
     console.log('🔄 Starting subscription tier migration...');
 
     // Connect to database
-    await mongoose.connect(config.mongodb.uri);
+    await mongoose.connect(config.mongodbUri);
     console.log('✅ Connected to database');
 
     // Find all users without subscriptionTier

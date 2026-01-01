@@ -18,7 +18,7 @@ import { SUBSCRIPTION_TIERS } from '../config/constants';
 async function migrateHybridSubscription() {
   try {
     // Connect to MongoDB
-    await mongoose.connect(config.mongoUri);
+    await mongoose.connect(config.mongodbUri);
     console.log('✅ Connected to MongoDB');
 
     // Find all users
