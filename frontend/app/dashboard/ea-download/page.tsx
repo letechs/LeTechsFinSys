@@ -4,7 +4,7 @@ import { useQuery } from 'react-query'
 import { userAPI } from '@/lib/api'
 import { Download, FileCode, CheckCircle, AlertCircle } from 'lucide-react'
 import { authService } from '@/lib/auth'
-import { useSubscriptionTier } from '@/components/FeatureGate'
+import { useSubscription } from '@/lib/hooks/useSubscription'
 import { useWebSocket } from '@/lib/hooks/useWebSocket'
 import Link from 'next/link'
 
@@ -16,8 +16,16 @@ const getBackendUrl = () => {
 }
 
 export default function EADownloadPage() {
-  const { tier, isExpired } = useSubscriptionTier()
+  const { tier, isExpired, subscription } = useSubscription()
   const user = authService.getCurrentUser()
+  
+  // Check if user is on active trial
+  const isOnTrial = subscription?.trialClaimed && 
+                    subscription?.trialExpiryDate && 
+                    new Date(subscription.trialExpiryDate) > new Date()
+  
+  // Show EA License download for EA_LICENSE tier, FULL_ACCESS tier, or active trial users
+  const canDownloadEALicense = (tier === 'EA_LICENSE' || tier === 'FULL_ACCESS' || isOnTrial) && !isExpired
 
   // Fetch user's MT5 accounts
   const { data: accounts } = useQuery('myAccounts', () =>
@@ -40,12 +48,16 @@ export default function EADownloadPage() {
     // EA License version (only completed version)
     // EA files are served from public/ea/ directory
     const fileName = 'CopyTradingEA_License.ex5'
-    const fileUrl = `/ea/${fileName}`
+    // Use absolute URL to ensure correct path (works in production)
+    const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
+    const fileUrl = `${baseUrl}/ea/${fileName}`
     
     // Create a temporary anchor element to trigger download
     const link = document.createElement('a')
     link.href = fileUrl
     link.download = fileName
+    // Open in new tab as fallback if download doesn't work
+    link.target = '_blank'
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -77,8 +89,21 @@ export default function EADownloadPage() {
 
         <div className="mt-4">
           <p className="text-lg font-medium text-gray-900 mb-2">
-            Current Tier: <span className="text-primary-600">{tier === 'FULL_ACCESS' ? 'Full Access' : tier === 'EA_LICENSE' ? 'EA License' : 'Basic'}</span>
+            Current Tier: <span className="text-primary-600">
+              {tier === 'FULL_ACCESS' ? 'Full Access' : tier === 'EA_LICENSE' ? 'EA License' : 'Basic'}
+              {isOnTrial && ' (Free Trial Active)'}
+            </span>
           </p>
+          {isOnTrial && (
+            <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center">
+                <CheckCircle className="w-5 h-5 text-blue-600 mr-2" />
+                <p className="text-sm text-blue-800">
+                  🎯 Free Trial Active - You can download and use the EA License version during your trial period.
+                </p>
+              </div>
+            </div>
+          )}
           {isExpired && (
             <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
               <div className="flex items-center">
@@ -92,19 +117,27 @@ export default function EADownloadPage() {
         </div>
       </div>
 
-      {/* EA License Tier Download */}
-      {tier === 'EA_LICENSE' && !isExpired && (
+      {/* EA License Tier Download - Show for EA_LICENSE tier, FULL_ACCESS tier, or active trial users */}
+      {canDownloadEALicense && (
         <div className="card border-2 border-primary-200 p-6">
           <div className="flex items-start justify-between mb-4">
             <div>
               <h3 className="text-xl font-semibold text-gray-900 mb-2">EA License Version</h3>
               <p className="text-gray-600 mb-4">
                 Local copy trading with minimal backend usage. Perfect for users who only need copy trading functionality.
+                {isOnTrial && ' Available during your free trial period.'}
               </p>
             </div>
-            <span className="badge badge-primary">
-              Recommended
-            </span>
+            <div className="flex flex-col items-end gap-2">
+              {isOnTrial && (
+                <span className="badge badge-primary">
+                  Free Trial
+                </span>
+              )}
+              <span className="badge badge-primary">
+                Recommended
+              </span>
+            </div>
           </div>
 
           <div className="space-y-2 mb-6">
@@ -219,27 +252,37 @@ export default function EADownloadPage() {
         </div>
       )}
 
-      {/* Basic Tier Message */}
-      {tier === 'BASIC' && (
+      {/* Basic Tier Message - Only show if not on trial */}
+      {tier === 'BASIC' && !isOnTrial && (
         <div className="bg-gray-50 rounded-lg border border-gray-200 p-6 mb-6">
           <div className="flex items-center mb-4">
             <AlertCircle className="w-6 h-6 text-gray-600 mr-2" />
             <h3 className="text-lg font-semibold text-gray-900">Basic Tier - EA Download Not Available</h3>
           </div>
           <p className="text-gray-700 mb-4">
-            EA download is only available for EA License and Full Access tiers. Please upgrade your subscription to access the EA.
+            EA download is only available for EA License and Full Access tiers, or during a free trial. Please upgrade your subscription or claim a free trial to access the EA.
           </p>
-          <Link
-            href="/dashboard/subscription"
-            className="inline-flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-          >
-            View Subscription Options
-          </Link>
+          <div className="flex gap-3">
+            <Link
+              href="/dashboard/subscription"
+              className="inline-flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+            >
+              View Subscription Options
+            </Link>
+            {!subscription?.trialClaimed && (
+              <Link
+                href="/dashboard/subscription"
+                className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Claim Free Trial
+              </Link>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Upgrade Prompt for EA License Users */}
-      {tier === 'EA_LICENSE' && !isExpired && (
+      {/* Upgrade Prompt for EA License Users (not for trial users) */}
+      {tier === 'EA_LICENSE' && !isExpired && !isOnTrial && (
         <div className="bg-gradient-to-r from-primary-50 to-blue-50 rounded-lg border border-primary-200 p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-2">Want More Features?</h3>
           <p className="text-gray-700 mb-4">
