@@ -24,18 +24,8 @@ export default function AdminUserDetailPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
-  // Check if user is admin
-  if (currentUser?.role !== 'admin') {
-    return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-        <div className="flex items-center">
-          <AlertCircle className="w-6 h-6 text-red-600 mr-2" />
-          <h2 className="text-xl font-semibold text-red-900">Access Denied</h2>
-        </div>
-        <p className="text-red-700 mt-2">You must be an admin to access this page.</p>
-      </div>
-    )
-  }
+  // Check if user is admin - do this after all hooks
+  const isAdmin = currentUser?.role === 'admin'
 
   // Fetch user subscription data - get all users and find the one matching userId
   const { data: userListData, isLoading: userLoading } = useQuery(
