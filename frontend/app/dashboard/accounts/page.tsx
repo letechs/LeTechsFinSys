@@ -399,7 +399,7 @@ export default function AccountsPage() {
         loginIdStr,
         allowedAccounts: licenseConfig.allowedAccounts,
         accountLoginIdType: typeof loginId,
-        allowedAccountsTypes: licenseConfig.allowedAccounts.map(id => typeof id),
+        allowedAccountsTypes: licenseConfig.allowedAccounts.map((id: string | number) => typeof id),
       })
     }
     return isAllowed
