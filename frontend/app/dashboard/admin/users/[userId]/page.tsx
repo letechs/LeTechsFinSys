@@ -511,7 +511,7 @@ export default function AdminUserDetailPage() {
                           <button
                             onClick={() => {
                               // TODO: Implement invoice view/download
-                              toast.info('Invoice view coming soon')
+                              toast('Invoice view coming soon')
                             }}
                             className="text-primary-600 hover:text-primary-800 flex items-center space-x-1"
                           >
