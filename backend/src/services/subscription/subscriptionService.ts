@@ -123,11 +123,53 @@ export class SubscriptionService {
         return null;
       }
 
+      // Get subscription - include both ACTIVE and TRIAL status (trial users need access too)
       let subscription = await Subscription.findOne({
         userId,
-        status: SUBSCRIPTION_STATUS.ACTIVE,
+        status: { $in: [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.TRIAL] },
         currentPeriodEnd: { $gte: new Date() },
       }).sort({ createdAt: -1 });
+
+      // If no subscription found, check if user has an active trial on User model
+      if (!subscription) {
+        const user = await User.findById(userId);
+        if (user) {
+          const now = new Date();
+          const hasActiveTrial = user.trialClaimed && 
+                                user.trialExpiryDate && 
+                                new Date(user.trialExpiryDate) > now;
+          
+          if (hasActiveTrial) {
+            // Get trial limits from global config
+            const globalConfig = await globalConfigService.getConfig();
+            const trialLimits = globalConfig.trial;
+            
+            // Create a temporary subscription object for trial users
+            // This allows the middleware to work with trial users
+            const trialSubscription = new Subscription({
+              userId: user._id,
+              planType: 'pro', // Default plan type for trials
+              billingCycle: 'monthly',
+              status: SUBSCRIPTION_STATUS.TRIAL,
+              currentPeriodStart: user.trialStartDate || now,
+              currentPeriodEnd: user.trialExpiryDate || new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000), // 3 days default
+              maxAccounts: trialLimits.masters + trialLimits.slaves, // Total accounts allowed
+              features: {
+                copyTrading: true,
+                remoteControl: true,
+                templates: false,
+                rulesEngine: false,
+                multiMaster: false,
+                apiAccess: false,
+              },
+            });
+            
+            // Don't save to database - just return it for middleware use
+            // The middleware will use this to check limits
+            return trialSubscription as ISubscription;
+          }
+        }
+      }
 
       // In development, create a default subscription if none exists
       if (!subscription && config.nodeEnv === 'development') {
