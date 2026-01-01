@@ -99,6 +99,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     // Store a flag to track if this is a real unmount (not React StrictMode)
     let isMounted = true;
     
+    // Copy ref values to local variables at effect time (not cleanup time)
+    const handleAccountUpdate = handlersRef.current.handleAccountUpdate;
+    const handleTradeUpdate = handlersRef.current.handleTradeUpdate;
+    const handleCommandUpdate = handlersRef.current.handleCommandUpdate;
+    
     return () => {
       // Only cleanup if this is a real unmount (component actually removed)
       // React StrictMode in dev runs cleanup then re-runs effect, so we need to be careful
@@ -107,10 +112,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       }
       
       isMounted = false;
-      // Copy ref values to local variables for cleanup
-      const handleAccountUpdate = handlersRef.current.handleAccountUpdate;
-      const handleTradeUpdate = handlersRef.current.handleTradeUpdate;
-      const handleCommandUpdate = handlersRef.current.handleCommandUpdate;
       
       if (handleAccountUpdate) {
         webSocketService.off('account:update', handleAccountUpdate);

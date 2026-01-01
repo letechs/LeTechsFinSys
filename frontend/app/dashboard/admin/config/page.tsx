@@ -199,7 +199,7 @@ export default function AdminConfigPage() {
               <TrialSystemSection
                 config={config.trial}
                 onUpdate={(data: any) => handleUpdateSection('trial', data)}
-                onBulkUpdate={(enabled, userIds) => updateTrialMutation.mutate({ enabled, userIds })}
+                onBulkUpdate={(enabled: boolean, userIds: string[]) => updateTrialMutation.mutate({ enabled, userIds })}
                 isLoading={updateSectionMutation.isLoading || updateTrialMutation.isLoading}
               />
             )}
