@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { authAPI } from '@/lib/api'
@@ -18,14 +18,7 @@ export default function VerifyEmailPage() {
   const [resending, setResending] = useState(false)
   const [resendSuccess, setResendSuccess] = useState(false)
 
-  useEffect(() => {
-    // Auto-verify if token is present
-    if (token) {
-      verifyEmail()
-    }
-  }, [token])
-
-  const verifyEmail = async () => {
+  const verifyEmail = useCallback(async () => {
     if (!token) return
 
     setLoading(true)

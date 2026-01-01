@@ -107,14 +107,19 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       }
       
       isMounted = false;
-      if (handlersRef.current.handleAccountUpdate) {
-        webSocketService.off('account:update', handlersRef.current.handleAccountUpdate);
+      // Copy ref values to local variables for cleanup
+      const handleAccountUpdate = handlersRef.current.handleAccountUpdate;
+      const handleTradeUpdate = handlersRef.current.handleTradeUpdate;
+      const handleCommandUpdate = handlersRef.current.handleCommandUpdate;
+      
+      if (handleAccountUpdate) {
+        webSocketService.off('account:update', handleAccountUpdate);
       }
-      if (handlersRef.current.handleTradeUpdate) {
-        webSocketService.off('trade:update', handlersRef.current.handleTradeUpdate);
+      if (handleTradeUpdate) {
+        webSocketService.off('trade:update', handleTradeUpdate);
       }
-      if (handlersRef.current.handleCommandUpdate) {
-        webSocketService.off('command:update', handlersRef.current.handleCommandUpdate);
+      if (handleCommandUpdate) {
+        webSocketService.off('command:update', handleCommandUpdate);
       }
     };
   }, []); // Empty array - only register once on mount, callbacks use refs
