@@ -1,15 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { authAPI } from '@/lib/api'
 import { Lock, AlertCircle, CheckCircle, ArrowLeft } from 'lucide-react'
 import PasswordStrengthIndicator from '@/components/PasswordStrengthIndicator'
 
-export const dynamic = 'force-dynamic'
-
-export default function ResetPasswordPage() {
+function ResetPasswordContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
