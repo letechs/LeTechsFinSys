@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { authAPI } from '@/lib/api'
 import { Mail, AlertCircle, CheckCircle, ArrowLeft, RefreshCw } from 'lucide-react'
 
+export const dynamic = 'force-dynamic'
+
 export default function VerifyEmailPage() {
   const router = useRouter()
   const searchParams = useSearchParams()

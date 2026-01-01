@@ -7,6 +7,8 @@ import { authAPI } from '@/lib/api'
 import { Lock, AlertCircle, CheckCircle, ArrowLeft } from 'lucide-react'
 import PasswordStrengthIndicator from '@/components/PasswordStrengthIndicator'
 
+export const dynamic = 'force-dynamic'
+
 export default function ResetPasswordPage() {
   const router = useRouter()
   const searchParams = useSearchParams()

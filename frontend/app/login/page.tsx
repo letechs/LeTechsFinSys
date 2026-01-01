@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { authService } from '@/lib/auth'
 import { LogIn, Mail, Lock, AlertCircle, CheckCircle, X } from 'lucide-react'
 
+export const dynamic = 'force-dynamic'
+
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
