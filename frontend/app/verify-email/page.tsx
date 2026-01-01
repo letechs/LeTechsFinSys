@@ -36,7 +36,14 @@ export default function VerifyEmailPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [token, router])
+
+  useEffect(() => {
+    // Auto-verify if token is present
+    if (token) {
+      verifyEmail()
+    }
+  }, [token, verifyEmail])
 
   const handleResendVerification = async () => {
     setResending(true)
