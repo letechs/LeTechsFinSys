@@ -69,15 +69,20 @@ export function useAccounts() {
     },
   })
 
+  // Check if user is on trial (for informational purposes only)
+  const isOnTrial = subscription?.trialClaimed && 
+                    subscription?.trialExpiryDate && 
+                    new Date(subscription.trialExpiryDate) > new Date()
+  
   // Calculate account limits and usage
-  const isBasicTier = currentTier === 'BASIC' || 
-    (subscription?.subscriptionTier === 'BASIC' && subscription?.baseTier)
+  // BASIC tier = no paid subscription and no active trial
+  const isBasicTier = currentTier === 'BASIC' && !isOnTrial
   
   const masterAccounts = accounts?.filter((acc: any) => acc.accountType === 'master') || []
   const slaveAccounts = accounts?.filter((acc: any) => acc.accountType === 'slave') || []
   const standaloneAccounts = accounts?.filter((acc: any) => acc.accountType === 'standalone') || []
 
-  // Get limits from subscription object or subscriptionLimits
+  // Get limits from subscription object or subscriptionLimits (backend already handles trial limits)
   const maxMasters = subscription?.limits?.totalMasters || subscriptionLimits?.totalMasters || 0
   const maxSlaves = subscription?.limits?.totalSlaves || subscriptionLimits?.totalSlaves || 0
 
@@ -115,6 +120,9 @@ export function useAccounts() {
     canAddSlave,
     canAddStandalone,
     canAddAny: canAddMaster || canAddSlave || canAddStandalone,
+    
+    // Trial status
+    isOnTrial,
     
     // Helper functions
     getAccountById: (id: string) => accounts?.find((acc: any) => acc._id === id || String(acc._id) === id),

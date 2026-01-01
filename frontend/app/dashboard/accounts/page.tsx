@@ -25,9 +25,12 @@ export default function AccountsPage() {
     canAddMaster,
     canAddSlave,
     canAddStandalone,
+    isOnTrial,
   } = useAccounts()
   
-  const isEALicense = currentTier === 'EA_LICENSE'
+  // Trial users use EA License UI (no status, balance, equity, token)
+  // EA License users also use EA License UI
+  const isEALicense = currentTier === 'EA_LICENSE' || isOnTrial
   const [showModal, setShowModal] = useState(false)
   
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null) // Track which account is being edited
@@ -78,7 +81,7 @@ export default function AccountsPage() {
           loginId: '',
           broker: '',
           server: '',
-          accountType: 'standalone',
+          accountType: 'standalone' as 'master' | 'slave' | 'standalone',
         })
         setEditFormMasterAccountId('')
         toast.success('Account created successfully!')
@@ -166,7 +169,7 @@ export default function AccountsPage() {
           loginId: '',
           broker: '',
           server: '',
-          accountType: 'standalone',
+          accountType: 'standalone' as 'master' | 'slave' | 'standalone',
         })
         setEditFormMasterAccountId('')
         setShowModal(false) // Close the modal after successful update
@@ -386,7 +389,20 @@ export default function AccountsPage() {
   // Check if account is allowed for EA License
   const isAccountAllowed = (loginId: string) => {
     if (!isEALicense || !licenseConfig) return true // Full access users can use all accounts
-    return licenseConfig.allowedAccounts?.includes(loginId) || false
+    // Convert both to strings for comparison (backend might return numbers as strings or vice versa)
+    const loginIdStr = String(loginId)
+    const isAllowed = licenseConfig.allowedAccounts?.some((allowedId: string | number) => String(allowedId) === loginIdStr) || false
+    // Debug logging (remove after fixing)
+    if (!isAllowed && licenseConfig.allowedAccounts) {
+      console.log('Account not allowed:', {
+        loginId,
+        loginIdStr,
+        allowedAccounts: licenseConfig.allowedAccounts,
+        accountLoginIdType: typeof loginId,
+        allowedAccountsTypes: licenseConfig.allowedAccounts.map(id => typeof id),
+      })
+    }
+    return isAllowed
   }
 
   // Accounts are already grouped by useAccounts hook
@@ -462,7 +478,7 @@ export default function AccountsPage() {
       loginId: '',
       broker: '',
       server: '',
-      accountType: 'standalone',
+      accountType: 'standalone' as 'master' | 'slave' | 'standalone',
     })
     setEditFormMasterAccountId('')
   }
@@ -776,11 +792,11 @@ export default function AccountsPage() {
                       required
                       className="form-input"
                       value={formData.accountType}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setFormData({ ...formData, accountType: e.target.value as 'master' | 'slave' | 'standalone' })
-                      }
+                      }}
                     >
-                      <option value="standalone">Standalone</option>
+                      {!isBasicTier && <option value="standalone">Standalone</option>}
                       {!isBasicTier && <option value="master">Master</option>}
                       {!isBasicTier && <option value="slave">Slave</option>}
                     </select>
@@ -846,22 +862,32 @@ export default function AccountsPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="section-title">MT5 Accounts</h1>
+            {isOnTrial && (
+              <div className="mt-2 mb-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <span className="text-blue-600 font-semibold">🎯 Free Trial Active</span>
+                  <span className="text-sm text-blue-700">
+                    Trial includes {subscription?.limits?.totalMasters || 0} master and {subscription?.limits?.totalSlaves || 0} slave account{subscription?.limits?.totalSlaves !== 1 ? 's' : ''} for copy trading
+                  </span>
+                </div>
+              </div>
+            )}
             {limits ? (
-              <div className="mt-2 flex items-center gap-4 text-sm text-gray-600">
-                <span>
-                  Masters: <span className="font-semibold">{masterAccounts.length}/{limits.maxMasters || 0}</span>
+              <div className="mt-2 flex items-center gap-4 text-sm">
+                <span className={isOnTrial ? "font-semibold text-blue-700" : "text-gray-600"}>
+                  Masters: <span className="font-bold">{masterAccounts.length}/{limits.maxMasters || 0}</span>
                 </span>
-                <span>
-                  Slaves: <span className="font-semibold">{slaveAccounts.length}/{limits.maxSlaves || 0}</span>
+                <span className={isOnTrial ? "font-semibold text-blue-700" : "text-gray-600"}>
+                  Slaves: <span className="font-bold">{slaveAccounts.length}/{limits.maxSlaves || 0}</span>
                 </span>
               </div>
             ) : subscription?.limits ? (
-              <div className="mt-2 flex items-center gap-4 text-sm text-gray-600">
-                <span>
-                  Masters: <span className="font-semibold">{masterAccounts.length}/{subscription.limits.totalMasters || 0}</span>
+              <div className="mt-2 flex items-center gap-4 text-sm">
+                <span className={isOnTrial ? "font-semibold text-blue-700" : "text-gray-600"}>
+                  Masters: <span className="font-bold">{masterAccounts.length}/{subscription.limits.totalMasters || 0}</span>
                 </span>
-                <span>
-                  Slaves: <span className="font-semibold">{slaveAccounts.length}/{subscription.limits.totalSlaves || 0}</span>
+                <span className={isOnTrial ? "font-semibold text-blue-700" : "text-gray-600"}>
+                  Slaves: <span className="font-bold">{slaveAccounts.length}/{subscription.limits.totalSlaves || 0}</span>
                 </span>
               </div>
             ) : (
@@ -1188,15 +1214,21 @@ export default function AccountsPage() {
                       !canAddMaster && !canAddSlave && !canAddStandalone
                     )}
                   >
-                    <option value="standalone">
-                      Standalone {!editingAccountId && !canAddStandalone && `(Limit: ${subscription?.limits.totalMasters + subscription?.limits.totalSlaves || 0})`}
-                    </option>
-                    <option value="master" disabled={!editingAccountId && !canAddMaster}>
-                      Master {!editingAccountId && `(${limits?.currentMasters || 0}/${limits?.maxMasters || 0})`} {!editingAccountId && !canAddMaster && '- Limit Reached'}
-                    </option>
-                    <option value="slave" disabled={!editingAccountId && !canAddSlave}>
-                      Slave {!editingAccountId && `(${limits?.currentSlaves || 0}/${limits?.maxSlaves || 0})`} {!editingAccountId && !canAddSlave && '- Limit Reached'}
-                    </option>
+                    {!isBasicTier && (
+                      <option value="standalone">
+                        Standalone {!editingAccountId && !canAddStandalone && `(Limit: ${subscription?.limits.totalMasters + subscription?.limits.totalSlaves || 0})`}
+                      </option>
+                    )}
+                    {!isBasicTier && (
+                      <option value="master" disabled={!editingAccountId && !canAddMaster}>
+                        Master {!editingAccountId && `(${limits?.currentMasters || masterAccounts.length || 0}/${limits?.maxMasters || subscription?.limits?.totalMasters || 0})`} {!editingAccountId && !canAddMaster && '- Limit Reached'}
+                      </option>
+                    )}
+                    {!isBasicTier && (
+                      <option value="slave" disabled={!editingAccountId && !canAddSlave}>
+                        Slave {!editingAccountId && `(${limits?.currentSlaves || slaveAccounts.length || 0}/${limits?.maxSlaves || subscription?.limits?.totalSlaves || 0})`} {!editingAccountId && !canAddSlave && '- Limit Reached'}
+                      </option>
+                    )}
                   </select>
                   {!editingAccountId && (
                     <div className="mt-2 space-y-1">

@@ -96,11 +96,14 @@ export const userAPI = {
   getProfile: () => api.get('/users/me'),
   updateProfile: (data: { name?: string }) => api.put('/users/me', data),
   getMyAccounts: () => api.get('/users/me/accounts'),
+  // Admin endpoints
+  createUser: (data: { email: string; password: string; name: string; role?: 'client' | 'admin' | 'viewer'; emailVerified?: boolean; isActive?: boolean }) => 
+    api.post('/users/admin/users', data),
   getMySubscription: () => api.get('/users/me/subscription'),
   changePassword: (data: { currentPassword: string; newPassword: string }) =>
     api.post('/users/me/change-password', data),
   // Admin endpoints
-  updateUser: (userId: string, data: { name?: string; email?: string; role?: 'admin' | 'client' | 'viewer' }) =>
+  updateUser: (userId: string, data: { name?: string; email?: string; role?: 'admin' | 'client' | 'viewer'; emailVerified?: boolean; isActive?: boolean }) =>
     api.put(`/users/admin/${userId}`, data),
   deleteUser: (userId: string) => api.delete(`/users/admin/${userId}`),
   blockUser: (userId: string) => api.post(`/users/admin/${userId}/block`),

@@ -306,11 +306,12 @@ export class LicenseService {
       const now = new Date();
       
       // Check if user is in BASIC tier
+      let hasActiveTrial = false;
       if (currentTier === SUBSCRIPTION_TIERS.BASIC) {
         // Check if user has active trial
-        const hasActiveTrial = user.trialClaimed && 
+        hasActiveTrial = !!(user.trialClaimed && 
                               user.trialExpiryDate && 
-                              new Date(user.trialExpiryDate) > now;
+                              new Date(user.trialExpiryDate) > now);
         
         if (!hasActiveTrial) {
           // BASIC tier - all features disabled
@@ -329,7 +330,8 @@ export class LicenseService {
       const baseTier = (user.baseTier as 'EA_LICENSE' | 'FULL_ACCESS') || 
                        (currentTier !== SUBSCRIPTION_TIERS.BASIC ? currentTier as 'EA_LICENSE' | 'FULL_ACCESS' : null);
       
-      if (!baseTier && currentTier === SUBSCRIPTION_TIERS.BASIC) {
+      // Only return empty if BASIC tier WITHOUT trial (trial users should continue)
+      if (!baseTier && currentTier === SUBSCRIPTION_TIERS.BASIC && !hasActiveTrial) {
         // BASIC tier without trial
         return {
           valid: false,
@@ -372,10 +374,10 @@ export class LicenseService {
       let additionalMasters = user.additionalMasters || 0;
       let additionalSlaves = user.additionalSlaves || 0;
       
-      // Check if user is in trial
-      const hasActiveTrial = user.trialClaimed && 
+      // Re-check if user is in trial (already declared above, just recalculate)
+      hasActiveTrial = !!(user.trialClaimed && 
                             user.trialExpiryDate && 
-                            new Date(user.trialExpiryDate) > now;
+                            new Date(user.trialExpiryDate) > now);
       
       if (hasActiveTrial && currentTier === SUBSCRIPTION_TIERS.BASIC) {
         // Use trial limits from global config
@@ -406,12 +408,15 @@ export class LicenseService {
       });
 
       // Get all MT5 accounts for this user
+      // For EA License (including trial), include all accounts regardless of status
+      // Only filter by status for Full Access users who need real-time connection
       const userObjectId = new mongoose.Types.ObjectId(userId);
       const userAccountsRaw = await MT5Account.find({
         userId: userObjectId,
-        status: 'active',
+        // Include all accounts - status filtering is not needed for EA License
+        // EA License works with accounts regardless of their connection status
       })
-        .select('loginId accountName accountType')
+        .select('loginId accountName accountType status')
         .lean();
 
       // CRITICAL FIX: Auto-fix corrupted accounts (swapped loginId/accountName) before processing
@@ -503,6 +508,18 @@ export class LicenseService {
       }
 
       const allowedAccountNumbers = userAccounts.map((acc) => String(acc.loginId));
+
+      logger.info('GetLicenseConfig: Building allowedAccountNumbers', {
+        userId,
+        userAccountsCount: userAccounts.length,
+        userAccountsLoginIds: userAccounts.map((acc) => ({
+          loginId: acc.loginId,
+          loginIdType: typeof acc.loginId,
+          accountName: acc.accountName,
+          accountType: acc.accountType,
+        })),
+        allowedAccountNumbers,
+      });
 
       // Verify the requesting account belongs to user
       let requestingAccount = userAccounts.find((acc) => String(acc.loginId) === String(mt5Login));

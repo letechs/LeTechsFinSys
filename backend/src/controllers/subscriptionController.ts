@@ -494,7 +494,7 @@ export class SubscriptionController {
       // Get users with pagination
       const skip = (Number(page) - 1) * Number(limit);
       const users = await User.find(query)
-        .select('_id email name subscriptionTier subscriptionExpiry subscriptionRenewalDate baseTier isActive createdAt')
+        .select('_id email name subscriptionTier subscriptionExpiry subscriptionRenewalDate baseTier isActive emailVerified role createdAt')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit))
@@ -527,6 +527,8 @@ export class SubscriptionController {
           isExpired: isExpired, // Show expired if expiry date passed, in grace period, OR moved to BASIC after expiry
           baseTier: subscription.baseTier, // Include baseTier to help frontend determine status
           isActive: user.isActive,
+          emailVerified: user.emailVerified,
+          role: user.role,
           createdAt: user.createdAt,
         };
       }));

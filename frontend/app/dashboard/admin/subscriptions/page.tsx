@@ -18,6 +18,8 @@ interface User {
   isExpired: boolean
   baseTier?: 'EA_LICENSE' | 'FULL_ACCESS' | null
   isActive: boolean
+  emailVerified?: boolean
+  role?: 'admin' | 'client' | 'viewer'
   createdAt: string
 }
 
@@ -55,7 +57,24 @@ export default function AdminSubscriptionsPage() {
   
   // User edit state
   const [editingUserInfo, setEditingUserInfo] = useState<string | null>(null)
-  const [userEditData, setUserEditData] = useState({ name: '', email: '', role: 'client' as 'admin' | 'client' | 'viewer' })
+  const [userEditData, setUserEditData] = useState({ 
+    name: '', 
+    email: '', 
+    role: 'client' as 'admin' | 'client' | 'viewer',
+    emailVerified: false,
+    isActive: true,
+  })
+  
+  // Create user state
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false)
+  const [createUserData, setCreateUserData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    role: 'client' as 'admin' | 'client' | 'viewer',
+    emailVerified: false,
+    isActive: true,
+  })
 
   // Maintain WebSocket listeners
   useWebSocket({})
@@ -188,7 +207,7 @@ export default function AdminSubscriptionsPage() {
 
   // Update user mutation
   const updateUserMutation = useMutation(
-    ({ userId, data }: { userId: string; data: { name?: string; email?: string; role?: 'admin' | 'client' | 'viewer' } }) =>
+    ({ userId, data }: { userId: string; data: { name?: string; email?: string; role?: 'admin' | 'client' | 'viewer'; emailVerified?: boolean; isActive?: boolean } }) =>
       userAPI.updateUser(userId, data),
     {
       onSuccess: () => {
@@ -276,6 +295,29 @@ export default function AdminSubscriptionsPage() {
     }
   )
 
+  // Create user mutation
+  const createUserMutation = useMutation(
+    (data: typeof createUserData) => userAPI.createUser(data),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries('adminUsers')
+        setShowCreateUserModal(false)
+        setCreateUserData({
+          name: '',
+          email: '',
+          password: '',
+          role: 'client',
+          emailVerified: false,
+          isActive: true,
+        })
+        toast.success('User created successfully!')
+      },
+      onError: (error: any) => {
+        toast.error(error.response?.data?.message || 'Failed to create user')
+      },
+    }
+  )
+
   const bulkUpdateTierMutation = useMutation(
     (data: { userIds: string[]; tier: 'BASIC' | 'EA_LICENSE' | 'FULL_ACCESS'; expiryDate?: string }) =>
       subscriptionAPI.bulkUpdateUserTiers(data),
@@ -356,7 +398,9 @@ export default function AdminSubscriptionsPage() {
     setUserEditData({
       name: user.name || '',
       email: user.email || '',
-      role: (user as any).role || 'client',
+      role: user.role || 'client',
+      emailVerified: user.emailVerified !== undefined ? user.emailVerified : false,
+      isActive: user.isActive !== undefined ? user.isActive : true,
     })
   }
 
@@ -367,6 +411,8 @@ export default function AdminSubscriptionsPage() {
         name: userEditData.name,
         email: userEditData.email,
         role: userEditData.role,
+        emailVerified: userEditData.emailVerified,
+        isActive: userEditData.isActive,
       },
     })
   }
@@ -742,8 +788,15 @@ export default function AdminSubscriptionsPage() {
         </div>
       )}
 
-      {/* Export Button */}
-      <div className="mb-4 flex justify-end">
+      {/* Action Buttons */}
+      <div className="mb-4 flex justify-between items-center">
+        <button
+          onClick={() => setShowCreateUserModal(true)}
+          className="flex items-center px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          Create User
+        </button>
         <button
           onClick={handleExportCSV}
           className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
@@ -1521,7 +1574,7 @@ export default function AdminSubscriptionsPage() {
                 <button
                   onClick={() => {
                     setEditingUserInfo(null)
-                    setUserEditData({ name: '', email: '', role: 'client' })
+                    setUserEditData({ name: '', email: '', role: 'client', emailVerified: false, isActive: true })
                   }}
                   className="text-gray-400 hover:text-gray-600"
                 >
@@ -1573,13 +1626,34 @@ export default function AdminSubscriptionsPage() {
                     <option value="viewer">Viewer</option>
                   </select>
                 </div>
+
+                <div className="flex items-center space-x-4 pt-2">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={userEditData.emailVerified}
+                      onChange={(e) => setUserEditData({ ...userEditData, emailVerified: e.target.checked })}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700">Email Verified</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={userEditData.isActive}
+                      onChange={(e) => setUserEditData({ ...userEditData, isActive: e.target.checked })}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700">Active</span>
+                  </label>
+                </div>
               </div>
 
               <div className="mt-6 flex justify-end space-x-3">
                 <button
                   onClick={() => {
                     setEditingUserInfo(null)
-                    setUserEditData({ name: '', email: '', role: 'client' })
+                    setUserEditData({ name: '', email: '', role: 'client', emailVerified: false, isActive: true })
                   }}
                   className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
                 >
@@ -1591,6 +1665,145 @@ export default function AdminSubscriptionsPage() {
                   className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
                 >
                   {updateUserMutation.isLoading ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create User Modal */}
+      {showCreateUserModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">Create New User</h2>
+                <button
+                  onClick={() => {
+                    setShowCreateUserModal(false)
+                    setCreateUserData({
+                      name: '',
+                      email: '',
+                      password: '',
+                      role: 'client',
+                      emailVerified: false,
+                      isActive: true,
+                    })
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={createUserData.name}
+                    onChange={(e) => setCreateUserData({ ...createUserData, name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    placeholder="Enter user name"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={createUserData.email}
+                    onChange={(e) => setCreateUserData({ ...createUserData, email: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    placeholder="user@example.com"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Password <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={createUserData.password}
+                    onChange={(e) => setCreateUserData({ ...createUserData, password: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    placeholder="Min 8 characters with uppercase, lowercase, and number"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Must be at least 8 characters with uppercase, lowercase, and number
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                  <select
+                    value={createUserData.role}
+                    onChange={(e) => setCreateUserData({ ...createUserData, role: e.target.value as 'client' | 'admin' | 'viewer' })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="client">Client</option>
+                    <option value="admin">Admin</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center space-x-4">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={createUserData.emailVerified}
+                      onChange={(e) => setCreateUserData({ ...createUserData, emailVerified: e.target.checked })}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700">Email Verified</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={createUserData.isActive}
+                      onChange={(e) => setCreateUserData({ ...createUserData, isActive: e.target.checked })}
+                      className="mr-2"
+                    />
+                    <span className="text-sm text-gray-700">Active</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end space-x-3">
+                <button
+                  onClick={() => {
+                    setShowCreateUserModal(false)
+                    setCreateUserData({
+                      name: '',
+                      email: '',
+                      password: '',
+                      role: 'client',
+                      emailVerified: false,
+                      isActive: true,
+                    })
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (!createUserData.name || !createUserData.email || !createUserData.password) {
+                      toast.error('Please fill in all required fields')
+                      return
+                    }
+                    createUserMutation.mutate(createUserData)
+                  }}
+                  disabled={createUserMutation.isLoading}
+                  className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+                >
+                  {createUserMutation.isLoading ? 'Creating...' : 'Create User'}
                 </button>
               </div>
             </div>

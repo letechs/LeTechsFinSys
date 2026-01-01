@@ -124,6 +124,59 @@ export class UserController {
   };
 
   /**
+   * Create user (Admin only)
+   * POST /api/admin/users
+   */
+  createUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        throw new ForbiddenError('Admin access required');
+      }
+
+      const { email, password, name, role, emailVerified, isActive } = req.body;
+
+      // Validate required fields
+      if (!email || !password || !name) {
+        throw new ValidationError('Email, password, and name are required');
+      }
+
+      // Create user
+      const user = await authService.createUser({
+        email,
+        password,
+        name,
+        role: role || 'client',
+        emailVerified: emailVerified !== undefined ? emailVerified : false,
+        isActive: isActive !== undefined ? isActive : true,
+      });
+
+      // Log history
+      await HistoryService.createEntry({
+        userId: user._id.toString(),
+        actionType: 'user_created',
+        description: `User created by admin ${req.user.email}`,
+        newValue: {
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          emailVerified: user.emailVerified,
+          isActive: user.isActive,
+        },
+        performedBy: req.user._id.toString(),
+        performedByEmail: req.user.email,
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'User created successfully',
+        data: user,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
    * Update user (Admin only)
    * PUT /api/admin/users/:userId
    */
@@ -134,7 +187,7 @@ export class UserController {
       }
 
       const { userId } = req.params;
-      const { name, email, role } = req.body;
+      const { name, email, role, emailVerified, isActive } = req.body;
 
       // Get old user data for history
       const oldUser = await authService.getUserById(userId);
@@ -142,15 +195,25 @@ export class UserController {
         name: oldUser.name,
         email: oldUser.email,
         role: oldUser.role,
+        emailVerified: oldUser.emailVerified,
+        isActive: oldUser.isActive,
       };
 
       // Update user
-      const updatedUser = await authService.updateUser(userId, { name, email, role });
+      const updatedUser = await authService.updateUser(userId, { 
+        name, 
+        email, 
+        role,
+        emailVerified,
+        isActive,
+      });
 
       const newValue = {
         name: updatedUser.name,
         email: updatedUser.email,
         role: updatedUser.role,
+        emailVerified: updatedUser.emailVerified,
+        isActive: updatedUser.isActive,
       };
 
       // Log history
@@ -573,9 +636,24 @@ export const changePasswordValidation = [
     }),
 ];
 
+export const createUserValidation = [
+  body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
+  body('password')
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number'),
+  body('name').trim().notEmpty().withMessage('Name is required'),
+  body('role').optional().isIn(['client', 'admin', 'viewer']).withMessage('Role must be client, admin, or viewer'),
+  body('emailVerified').optional().isBoolean().withMessage('emailVerified must be a boolean'),
+  body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
+];
+
 export const updateUserValidation = [
   body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
   body('email').optional().isEmail().withMessage('Invalid email format'),
   body('role').optional().isIn(['admin', 'client', 'viewer']).withMessage('Invalid role'),
+  body('emailVerified').optional().isBoolean().withMessage('emailVerified must be a boolean'),
+  body('isActive').optional().isBoolean().withMessage('isActive must be a boolean'),
 ];
 

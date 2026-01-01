@@ -8,6 +8,13 @@ import { useSubscriptionTier } from '@/components/FeatureGate'
 import { useWebSocket } from '@/lib/hooks/useWebSocket'
 import Link from 'next/link'
 
+// Get backend API URL (without /api suffix) for EA configuration
+const getBackendUrl = () => {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'
+  // Remove trailing slashes and /api if present
+  return apiUrl.replace(/\/+$/, '').replace(/\/api$/, '')
+}
+
 export default function EADownloadPage() {
   const { tier, isExpired } = useSubscriptionTier()
   const user = authService.getCurrentUser()
@@ -123,7 +130,7 @@ export default function EADownloadPage() {
             <h4 className="font-medium text-gray-900 mb-3">Configuration Required:</h4>
             <div className="bg-gray-50 p-4 rounded-lg mb-4">
               <p className="text-sm text-gray-700 mb-2">
-                <strong>Backend API URL:</strong> <code className="bg-gray-200 px-2 py-1 rounded">http://localhost:5000</code>
+                <strong>Backend API URL:</strong> <code className="bg-gray-200 px-2 py-1 rounded">{getBackendUrl()}</code>
               </p>
               <p className="text-sm text-gray-700 mb-2">
                 <strong>User ID:</strong> <code className="bg-gray-200 px-2 py-1 rounded">{user?._id || 'Your User ID'}</code>
@@ -270,7 +277,7 @@ export default function EADownloadPage() {
               Open EA inputs and configure:
             </p>
             <ul className="list-disc list-inside mt-2 space-y-1 text-gray-600 ml-4">
-              <li>LicenseApiUrl: Your backend URL</li>
+              <li>LicenseApiUrl: <code className="bg-gray-100 px-1 rounded">{getBackendUrl()}</code></li>
               <li>UserId: Your user ID (shown above)</li>
               <li>MT5AccountNumbers: Your account numbers (comma-separated)</li>
               <li>Other copy trading settings</li>

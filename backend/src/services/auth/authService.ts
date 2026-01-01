@@ -85,6 +85,70 @@ export class AuthService {
   }
 
   /**
+   * Create user (Admin only) - similar to register but allows admin to set role and skip email verification requirement
+   */
+  async createUser(data: {
+    email: string;
+    password: string;
+    name: string;
+    role?: 'client' | 'admin' | 'viewer';
+    emailVerified?: boolean;
+    isActive?: boolean;
+  }): Promise<IUser> {
+    try {
+      // Check if MongoDB is connected
+      const mongoose = require('mongoose');
+      if (mongoose.connection.readyState !== 1) {
+        throw new Error('Database connection is not available. Please ensure MongoDB is running.');
+      }
+
+      // Check if user already exists
+      const existingUser = await User.findOne({ email: data.email.toLowerCase() });
+      
+      if (existingUser) {
+        throw new ConflictError('User with this email already exists');
+      }
+
+      // Validate password strength
+      const passwordValidation = validatePasswordStrength(data.password);
+      if (!passwordValidation.isValid) {
+        throw new ValidationError(passwordValidation.errors.join('. '));
+      }
+
+      // Create user
+      const user = new User({
+        email: data.email.toLowerCase(),
+        password: data.password,
+        name: data.name,
+        role: data.role || 'client',
+        isActive: data.isActive !== undefined ? data.isActive : true,
+        emailVerified: data.emailVerified !== undefined ? data.emailVerified : false,
+        failedLoginAttempts: 0,
+      });
+
+      await user.save();
+
+      // Send verification email if not already verified (don't block if email fails)
+      if (!user.emailVerified) {
+        emailVerificationService.sendVerificationEmail(user._id.toString(), user.email).catch((error) => {
+          logger.error(`Failed to send verification email to ${user.email}:`, error);
+          // Don't throw - user is already created
+        });
+      }
+
+      logger.info(`New user created by admin: ${user.email} (role: ${user.role})`);
+
+      return user;
+    } catch (error: any) {
+      logger.error('User creation error:', error);
+      if (error.message?.includes('Database connection')) {
+        throw new ValidationError('Database connection is not available. Please ensure MongoDB is running.');
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Login user
    */
   async login(data: LoginData): Promise<AuthResponse> {
@@ -261,7 +325,7 @@ export class AuthService {
    */
   async updateUser(
     userId: string,
-    data: { name?: string; email?: string; role?: 'admin' | 'client' | 'viewer' }
+    data: { name?: string; email?: string; role?: 'admin' | 'client' | 'viewer'; emailVerified?: boolean; isActive?: boolean }
   ): Promise<IUser> {
     const user = await User.findById(userId);
 
@@ -296,6 +360,14 @@ export class AuthService {
 
     if (data.role !== undefined) {
       user.role = data.role;
+    }
+
+    if (data.emailVerified !== undefined) {
+      user.emailVerified = data.emailVerified;
+    }
+
+    if (data.isActive !== undefined) {
+      user.isActive = data.isActive;
     }
 
     await user.save();
