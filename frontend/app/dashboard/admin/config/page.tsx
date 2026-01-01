@@ -245,7 +245,7 @@ export default function AdminConfigPage() {
               <GlobalOffersSection
                 config={config.globalOffers}
                 onUpdate={(data: any) => handleUpdateSection('globalOffers', data)}
-                onApplyOffer={(userIds) => applyOfferMutation.mutate(userIds)}
+                onApplyOffer={(userIds: string[]) => applyOfferMutation.mutate(userIds)}
                 isLoading={updateSectionMutation.isLoading || applyOfferMutation.isLoading}
               />
             )}
