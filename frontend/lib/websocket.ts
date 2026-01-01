@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { authService } from './auth';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000').replace(/\/+$/, ''); // Remove trailing slashes
 
 export interface AccountUpdate {
   accountId: string;
