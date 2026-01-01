@@ -1,0 +1,66 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables (NEVER commit these!)
+.env
+.env.local
+.env.production
+.env.development
+backend/.env
+backend/.env.local
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+
+# Vercel
+.vercel
+
+# PM2
+.pm2/
+
+# TypeScript
+*.tsbuildinfo
+
+# Compiled files
+*.ex5
+*.ex4
+*.dll
+
+# Keep EA source files, but ignore compiled binaries
+# MT5-EA/**/*.ex5
+# MT5-EA-License/**/*.ex5
+

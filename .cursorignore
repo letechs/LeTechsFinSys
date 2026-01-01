@@ -1,0 +1,80 @@
+# Node modules - should already be excluded but explicitly here
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Log files - these can be huge and change frequently
+*.log
+logs/
+**/logs/
+
+# Lock files - large and rarely need AI analysis
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Documentation files - exclude most markdown files that are just notes/docs
+# (Keep only essential README files)
+*.md
+!README.md
+!**/README.md
+!QUICK-START.md
+!TESTING-GUIDE.md
+!MT5-EA-SPECIFICATION.md
+!GLOBAL_CONFIG_ANALYSIS.md
+!PROJECT_IMPROVEMENTS_TODO.md
+!PROJECT-SETUP.md
+!EA-CONFIGURATION-GUIDE.md
+!QUICK-REFERENCE-EA-CONFIG.md
+!PRODUCTION-DEPLOYMENT-CHECKLIST.md
+
+# Test files (if you don't need AI help with tests often)
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+__tests__/
+**/__tests__/
+
+# Cache directories
+.cache/
+.parcel-cache/
+.eslintcache
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Large data files
+*.csv
+*.json.bak
+*.sql
+
+# Minified files (already compiled)
+*.min.js
+*.min.css
+

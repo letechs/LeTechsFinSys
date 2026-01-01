@@ -1,0 +1,239 @@
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { authService } from '@/lib/auth'
+import { LogIn, Mail, Lock, AlertCircle, CheckCircle, X } from 'lucide-react'
+
+export default function LoginPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [loading, setLoading] = useState(false)
+  const errorTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  useEffect(() => {
+    // Show success messages from query params
+    if (searchParams.get('verified') === 'true') {
+      setSuccess('Email verified successfully! You can now log in.')
+    }
+    if (searchParams.get('password-reset') === 'true') {
+      setSuccess('Password reset successful! You can now log in with your new password.')
+    }
+  }, [searchParams])
+
+  // Clear any existing timeout when component unmounts
+  useEffect(() => {
+    return () => {
+      if (errorTimeoutRef.current) {
+        clearTimeout(errorTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    // Clear any existing timeout
+    if (errorTimeoutRef.current) {
+      clearTimeout(errorTimeoutRef.current)
+      errorTimeoutRef.current = null
+    }
+    
+    // Clear errors and success only on form submission
+    setError('')
+    setSuccess('')
+    setLoading(true)
+
+    try {
+      await authService.login(email, password)
+      router.push('/dashboard')
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.message || 'Login failed. Please check your credentials.'
+      // Use setTimeout to ensure state update happens after any potential re-renders
+      setTimeout(() => {
+        setError(errorMessage)
+      }, 0)
+    } finally {
+      setLoading(false)
+    }
+  }
+  
+  // Prevent error from clearing on input changes
+  const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setEmail(e.target.value)
+    // Don't clear error on input change
+  }
+  
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(e.target.value)
+    // Don't clear error on input change
+  }
+
+  const handleDismissError = () => {
+    if (errorTimeoutRef.current) {
+      clearTimeout(errorTimeoutRef.current)
+      errorTimeoutRef.current = null
+    }
+    setError('')
+  }
+
+  const handleDismissSuccess = () => {
+    setSuccess('')
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md w-full">
+        {/* Logo and Header */}
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary-600 rounded-2xl mb-4 shadow-lg">
+            <LogIn className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back</h1>
+          <p className="text-gray-600">Sign in to your LeTechs account</p>
+        </div>
+
+        {/* Login Card */}
+        <div className="card p-8">
+          <form className="space-y-6" onSubmit={handleSubmit}>
+            {success && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3 relative animate-in fade-in slide-in-from-top-2 duration-300">
+                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-green-700 flex-1 pr-6">{success}</p>
+                <button
+                  type="button"
+                  onClick={handleDismissSuccess}
+                  className="absolute top-4 right-4 text-green-600 hover:text-green-800 transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 rounded"
+                  aria-label="Dismiss message"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+            {error && (
+              <div className="bg-error-50 border border-error-200 rounded-lg p-4 flex items-start gap-3 relative animate-in fade-in slide-in-from-top-2 duration-300" role="alert">
+                <AlertCircle className="w-5 h-5 text-error-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1 pr-6">
+                  <p className="text-sm text-error-700 font-medium">{error}</p>
+                  {error.includes('Email verification required') && (
+                    <div className="mt-2">
+                      <Link
+                        href="/verify-email"
+                        className="text-sm text-primary-600 hover:text-primary-700 font-medium underline"
+                      >
+                        Click here to verify your email or resend verification email
+                      </Link>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDismissError}
+                  className="absolute top-4 right-4 text-error-600 hover:text-error-800 transition-colors focus:outline-none focus:ring-2 focus:ring-error-500 rounded"
+                  aria-label="Dismiss error"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-5">
+              <div>
+                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none z-10" />
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    className="!pl-11 !pr-4"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={handleEmailChange}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none z-10" />
+                  <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    className="!pl-11 !pr-4"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={handlePasswordChange}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn btn-primary w-full"
+            >
+              {loading ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Signing in...
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-5 h-5 mr-2" />
+                  Sign In
+                </>
+              )}
+            </button>
+
+            <div className="space-y-3">
+              <div className="text-center">
+                <Link
+                  href="/forgot-password"
+                  className="text-sm font-medium text-primary-600 hover:text-primary-700 transition-colors"
+                >
+                  Forgot your password?
+                </Link>
+              </div>
+              <div className="text-center pt-2 border-t border-gray-200">
+                <p className="text-sm text-gray-600">
+                  Don't have an account?{' '}
+                  <Link
+                    href="/register"
+                    className="font-medium text-primary-600 hover:text-primary-700 transition-colors"
+                  >
+                    Create one here
+                  </Link>
+                </p>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        {/* Footer */}
+        <p className="mt-6 text-center text-xs text-gray-500">
+          MT5 Copy Trading Platform
+        </p>
+      </div>
+    </div>
+  )
+}

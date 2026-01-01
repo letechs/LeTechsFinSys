@@ -1,0 +1,55 @@
+{
+  "name": "letechs-copy-trading-backend",
+  "version": "1.0.0",
+  "description": "LeTechs MT5 Copy Trading System - Backend API",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=18.0.0 <19.0.0",
+    "npm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "nodemon --exec ts-node src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "mt5",
+    "copy-trading",
+    "forex"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/nodemailer": "^7.0.4",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.0.1",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.12",
+    "redis": "^5.10.0",
+    "socket.io": "^4.8.1",
+    "stripe": "^20.0.0",
+    "uuid": "^9.0.1",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24.10.1",
+    "@types/socket.io": "^3.0.2",
+    "@types/uuid": "^9.0.7",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
