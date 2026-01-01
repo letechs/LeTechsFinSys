@@ -22,7 +22,10 @@ export class EmailService {
     const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
     const smtpUser = process.env.SMTP_USER || process.env.SMTP_EMAIL;
     const smtpPass = process.env.SMTP_PASSWORD || process.env.SMTP_APP_PASSWORD;
-    const smtpSecure = process.env.SMTP_SECURE === 'true' || smtpPort === 465;
+    
+    // For Gmail: secure MUST be false for port 587 (STARTTLS), true only for port 465 (SSL)
+    // This is critical for Railway/cloud deployments
+    const smtpSecure = smtpPort === 465;
 
     // In development, if no SMTP configured, log warning but don't fail
     if (config.nodeEnv === 'development' && !smtpUser && !smtpPass) {
@@ -41,20 +44,67 @@ export class EmailService {
       this.transporter = nodemailer.createTransport({
         host: smtpHost,
         port: smtpPort,
-        secure: smtpSecure,
+        secure: smtpSecure, // false for 587 (STARTTLS), true for 465 (SSL)
         auth: {
           user: smtpUser,
           pass: smtpPass,
         },
-        // For Gmail, require TLS
+        // TLS configuration for Gmail
         tls: {
-          rejectUnauthorized: false, // Accept self-signed certs (for development)
+          rejectUnauthorized: false, // Accept self-signed certs (required for some cloud providers)
         },
       });
 
-      logger.info(`Email service initialized: ${smtpHost}:${smtpPort}`);
+      logger.info(`Email service initialized: ${smtpHost}:${smtpPort} (secure: ${smtpSecure}, user: ${smtpUser})`);
+      
+      // Verify SMTP connection on startup (for debugging)
+      this.transporter.verify((error: any, success: any) => {
+        if (error) {
+          logger.error('❌ SMTP connection verification failed:', error);
+          logger.error('SMTP verify error details:', {
+            message: error.message,
+            code: error.code,
+            command: error.command,
+            response: error.response,
+            responseCode: error.responseCode,
+          });
+        } else {
+          logger.info('✅ SMTP connection verified successfully - ready to send emails');
+        }
+      });
     } catch (error: any) {
       logger.error('Failed to initialize email transporter:', error);
+      logger.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+      });
+    }
+  }
+
+  /**
+   * Verify SMTP connection
+   */
+  async verifyConnection(): Promise<boolean> {
+    if (!this.transporter) {
+      logger.warn('Email transporter not initialized. Cannot verify connection.');
+      return false;
+    }
+
+    try {
+      await this.transporter.verify();
+      logger.info('✅ SMTP connection verified successfully');
+      return true;
+    } catch (error: any) {
+      logger.error('❌ SMTP connection verification failed:', error);
+      logger.error('Verification error details:', {
+        message: error.message,
+        code: error.code,
+        command: error.command,
+        response: error.response,
+        responseCode: error.responseCode,
+      });
+      return false;
     }
   }
 
@@ -83,11 +133,33 @@ export class EmailService {
         text: options.text || options.html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
       };
 
+      logger.debug(`Attempting to send email to ${options.to} from ${fromEmail}`);
       const info = await this.transporter.sendMail(mailOptions);
-      logger.info(`Email sent successfully to ${options.to}: ${info.messageId}`);
+      logger.info(`✅ Email sent successfully to ${options.to}: ${info.messageId}`);
     } catch (error: any) {
-      logger.error(`Failed to send email to ${options.to}:`, error);
-      throw new Error(`Failed to send email: ${error.message}`);
+      logger.error(`❌ Failed to send email to ${options.to}:`, error);
+      logger.error('Email error details:', {
+        message: error.message,
+        code: error.code,
+        command: error.command,
+        response: error.response,
+        responseCode: error.responseCode,
+        stack: error.stack,
+      });
+      
+      // Provide more helpful error messages for common Gmail errors
+      let errorMessage = error.message || 'Unknown error';
+      if (error.responseCode === 535) {
+        errorMessage = 'Gmail authentication failed. Please check your App Password.';
+      } else if (error.responseCode === 550 || error.responseCode === 553) {
+        errorMessage = `Gmail rejected the email. From address (${fromEmail}) must match the authenticated email address.`;
+      } else if (error.code === 'EAUTH') {
+        errorMessage = 'Email authentication failed. Check your SMTP credentials.';
+      } else if (error.code === 'ECONNECTION') {
+        errorMessage = 'Could not connect to SMTP server. Check your network connection.';
+      }
+      
+      throw new Error(`Failed to send email: ${errorMessage}`);
     }
   }
 
