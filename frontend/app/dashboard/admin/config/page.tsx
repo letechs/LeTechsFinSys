@@ -189,7 +189,7 @@ export default function AdminConfigPage() {
             {activeSection === 'subscriptionPricing' && (
               <SubscriptionPricingSection
                 config={config.subscriptionPricing}
-                onUpdate={(data) => handleUpdateSection('subscriptionPricing', data)}
+                onUpdate={(data: any) => handleUpdateSection('subscriptionPricing', data)}
                 isLoading={updateSectionMutation.isLoading}
               />
             )}
@@ -198,7 +198,7 @@ export default function AdminConfigPage() {
             {activeSection === 'trial' && (
               <TrialSystemSection
                 config={config.trial}
-                onUpdate={(data) => handleUpdateSection('trial', data)}
+                onUpdate={(data: any) => handleUpdateSection('trial', data)}
                 onBulkUpdate={(enabled, userIds) => updateTrialMutation.mutate({ enabled, userIds })}
                 isLoading={updateSectionMutation.isLoading || updateTrialMutation.isLoading}
               />
@@ -208,7 +208,7 @@ export default function AdminConfigPage() {
             {activeSection === 'gracePeriod' && (
               <GracePeriodSection
                 config={config.gracePeriod}
-                onUpdate={(data) => handleUpdateSection('gracePeriod', data)}
+                onUpdate={(data: any) => handleUpdateSection('gracePeriod', data)}
                 isLoading={updateSectionMutation.isLoading}
               />
             )}
@@ -217,7 +217,7 @@ export default function AdminConfigPage() {
             {activeSection === 'baseTierLimits' && (
               <BaseTierLimitsSection
                 config={config.baseTierLimits}
-                onUpdate={(data) => handleUpdateSection('baseTierLimits', data)}
+                onUpdate={(data: any) => handleUpdateSection('baseTierLimits', data)}
                 isLoading={updateSectionMutation.isLoading}
               />
             )}
@@ -226,7 +226,7 @@ export default function AdminConfigPage() {
             {activeSection === 'defaultRenewalPeriod' && (
               <DefaultRenewalPeriodSection
                 config={config.defaultRenewalPeriod}
-                onUpdate={(data) => handleUpdateSection('defaultRenewalPeriod', data)}
+                onUpdate={(data: any) => handleUpdateSection('defaultRenewalPeriod', data)}
                 isLoading={updateSectionMutation.isLoading}
               />
             )}
@@ -235,7 +235,7 @@ export default function AdminConfigPage() {
             {activeSection === 'clientDiscount' && (
               <ClientDiscountSection
                 config={config.clientDiscount}
-                onUpdate={(data) => handleUpdateSection('clientDiscount', data)}
+                onUpdate={(data: any) => handleUpdateSection('clientDiscount', data)}
                 isLoading={updateSectionMutation.isLoading}
               />
             )}
@@ -244,7 +244,7 @@ export default function AdminConfigPage() {
             {activeSection === 'globalOffers' && (
               <GlobalOffersSection
                 config={config.globalOffers}
-                onUpdate={(data) => handleUpdateSection('globalOffers', data)}
+                onUpdate={(data: any) => handleUpdateSection('globalOffers', data)}
                 onApplyOffer={(userIds) => applyOfferMutation.mutate(userIds)}
                 isLoading={updateSectionMutation.isLoading || applyOfferMutation.isLoading}
               />
@@ -254,7 +254,7 @@ export default function AdminConfigPage() {
             {activeSection === 'addOnPricing' && (
               <AddOnPricingSection
                 config={config.addOnPricing}
-                onUpdate={(data) => handleUpdateSection('addOnPricing', data)}
+                onUpdate={(data: any) => handleUpdateSection('addOnPricing', data)}
                 isLoading={updateSectionMutation.isLoading}
               />
             )}
@@ -263,7 +263,7 @@ export default function AdminConfigPage() {
             {activeSection === 'eaDefaults' && (
               <EADefaultsSection
                 config={config.eaDefaults}
-                onUpdate={(data) => handleUpdateSection('eaDefaults', data)}
+                onUpdate={(data: any) => handleUpdateSection('eaDefaults', data)}
                 isLoading={updateSectionMutation.isLoading}
               />
             )}
