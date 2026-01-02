@@ -58,16 +58,30 @@ const startServer = async () => {
     logger.info(`🔌 Port: ${config.port}`);
     logger.info(`🌐 API URL: ${config.apiUrl}`);
     
-    // Create HTTP server FIRST (so Railway health check can see it)
-    const httpServer = http.createServer(app);
-    
     // Use Railway's PORT directly (required for Railway to detect the server)
     const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : config.port;
     console.log(`🚀 [SERVER] Binding to port ${PORT} (from ${process.env.PORT ? 'process.env.PORT' : 'config.port'})`);
     
+    // Create HTTP server with immediate health check handler
+    // This ensures Railway sees the server is alive BEFORE any heavy initialization
+    // Health checks bypass all Express middleware for instant response
+    const httpServer = http.createServer((req, res) => {
+      // CRITICAL: Immediate health check response - no Express, no middleware, no blocking
+      // Railway checks these endpoints within 3 seconds - must respond instantly
+      if (req.url === '/' || req.url === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', time: new Date().toISOString() }));
+        console.log(`✅ [HEALTH] ${req.url} → 200 OK (Railway health check passed)`);
+        return;
+      }
+      // For all other routes, delegate to Express app (with full middleware stack)
+      app(req, res);
+    });
+    
     // Start server IMMEDIATELY - don't wait for anything (Railway needs to see the server alive)
     httpServer.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 [SERVER] Server successfully bound to port ${PORT}`);
+      console.log(`✅ [SERVER] Health check ready - Railway can now verify the service`);
       logger.info(`🚀 Server running on port ${PORT}`);
       logger.info(`📝 Environment: ${config.nodeEnv}`);
       logger.info(`🌐 API URL: ${config.apiUrl}`);
