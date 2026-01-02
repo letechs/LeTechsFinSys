@@ -58,67 +58,75 @@ const startServer = async () => {
     logger.info(`🔌 Port: ${config.port}`);
     logger.info(`🌐 API URL: ${config.apiUrl}`);
     
-    // Connect to database
-    try {
-      logger.info('📦 Connecting to MongoDB...');
-      await connectDatabase();
-    } catch (error: any) {
-      logger.error('❌ MongoDB connection failed:', error);
-      logger.error('Error details:', {
-        message: error.message,
-        code: error.code,
-        name: error.name,
-      });
-      
-      if (config.nodeEnv === 'production') {
-        logger.error('❌ Server cannot start without database in production.');
-        logger.error('Please ensure MONGODB_URI is set correctly in Railway environment variables.');
-        logger.error('Current MONGODB_URI:', config.mongodbUri ? 'SET (but connection failed)' : 'NOT SET');
-        
-        // Give logger time to flush before exiting
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        process.exit(1);
-      } else {
-        logger.warn('⚠️  MongoDB connection failed. Server will start but database features will not work.');
-        logger.warn('💡 To fix: Install MongoDB or use MongoDB Atlas (free): https://www.mongodb.com/cloud/atlas');
-        logger.warn('   Or set MONGODB_URI in .env file to your MongoDB connection string');
-      }
-    }
-
-    // Connect to Redis (optional - won't crash if it fails)
-    try {
-      await connectRedis();
-    } catch (error) {
-      // Redis connection failed, but continue anyway (Redis is optional)
-      // Silently continue - no warning needed
-    }
-
-    // Create HTTP server
+    // Create HTTP server FIRST (so Railway health check can see it)
     const httpServer = http.createServer(app);
-
-    // Initialize WebSocket server
-    webSocketService.initialize(httpServer);
-
-    // Start account status monitor (checks for stale accounts and emits offline updates)
-    accountStatusMonitor.start();
-
+    
     // Use Railway's PORT directly (required for Railway to detect the server)
     const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : config.port;
     console.log(`🚀 [SERVER] Binding to port ${PORT} (from ${process.env.PORT ? 'process.env.PORT' : 'config.port'})`);
     
-    // Start server - MUST bind to 0.0.0.0 for Railway
+    // Start server IMMEDIATELY - don't wait for anything (Railway needs to see the server alive)
     httpServer.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 [SERVER] Server successfully bound to port ${PORT}`);
       logger.info(`🚀 Server running on port ${PORT}`);
       logger.info(`📝 Environment: ${config.nodeEnv}`);
       logger.info(`🌐 API URL: ${config.apiUrl}`);
-      logger.info(`🔌 WebSocket server initialized`);
-      logger.info(`✅ Server startup complete - ready to accept connections`);
-      if (config.nodeEnv !== 'production') {
-        if (!mongoose.connection.readyState) {
-          logger.warn('⚠️  MongoDB is not connected. Some features may not work.');
+      logger.info(`✅ Server is alive - Railway health check will pass`);
+      
+      // DEFER ALL HEAVY SERVICES - Initialize after server is bound
+      // This ensures Railway sees the server is alive immediately
+      setImmediate(async () => {
+        try {
+          // Initialize WebSocket server
+          logger.info('🔌 Initializing WebSocket server...');
+          webSocketService.initialize(httpServer);
+          logger.info('🟢 WebSocket server ready');
+
+          // Start account status monitor
+          logger.info('🔍 Starting account status monitor...');
+          accountStatusMonitor.start();
+          logger.info('🟢 Account status monitor started');
+
+          // Connect to database (non-blocking for Railway health check)
+          logger.info('📦 Connecting to MongoDB (background)...');
+          await connectDatabase();
+          logger.info('🟢 MongoDB connected successfully');
+
+          // Connect to Redis (optional - won't crash if it fails)
+          try {
+            await connectRedis();
+            logger.info('🟢 Redis connected successfully');
+          } catch (error) {
+            // Redis connection failed, but continue anyway (Redis is optional)
+            logger.warn('⚠️  Redis connection failed (optional service)');
+          }
+
+          logger.info(`✅ All background services initialized - server fully ready`);
+        } catch (error: any) {
+          logger.error('❌ Background service initialization failed:', error);
+          logger.error('Error details:', {
+            message: error.message,
+            code: error.code,
+            name: error.name,
+            stack: error.stack,
+          });
+          
+          // Don't exit - let server run so Railway doesn't kill it
+          // Individual services will handle their own errors
+          if (error.message?.includes('MongoDB')) {
+            if (config.nodeEnv === 'production') {
+              logger.error('❌ MongoDB connection failed in production.');
+              logger.error('Please ensure MONGODB_URI is set correctly in Railway environment variables.');
+              logger.error('Current MONGODB_URI:', config.mongodbUri ? 'SET (but connection failed)' : 'NOT SET');
+              logger.error('⚠️  Server will continue running but database features will not work.');
+            } else {
+              logger.warn('⚠️  MongoDB connection failed. Server will start but database features will not work.');
+              logger.warn('💡 To fix: Install MongoDB or use MongoDB Atlas (free): https://www.mongodb.com/cloud/atlas');
+              logger.warn('   Or set MONGODB_URI in .env file to your MongoDB connection string');
+            }
+          }
         }
-      }
+      });
     });
     
     // Handle server errors
