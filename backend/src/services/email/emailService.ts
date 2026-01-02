@@ -17,45 +17,47 @@ export class EmailService {
   }
 
   private initializeTransporter(): void {
-    // Use Gmail SMTP (free) or custom SMTP from environment
-    const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
-    const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
-    const smtpUser = process.env.SMTP_USER || process.env.SMTP_EMAIL;
-    const smtpPass = process.env.SMTP_PASSWORD || process.env.SMTP_APP_PASSWORD;
-    
-    // For Gmail: secure MUST be false for port 587 (STARTTLS), true only for port 465 (SSL)
-    // This is critical for Railway/cloud deployments
-    const smtpSecure = smtpPort === 465;
+    // Brevo SMTP configuration - require explicit env vars (no Gmail fallback)
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : undefined;
+    // Brevo uses SMTP_EMAIL as the login username (e.g., 9f1ca6001@smtp-brevo.com)
+    const smtpUser = process.env.SMTP_EMAIL;
+    const smtpPass = process.env.SMTP_PASSWORD;
 
-    // In development, if no SMTP configured, log warning but don't fail
-    if (config.nodeEnv === 'development' && !smtpUser && !smtpPass) {
-      logger.warn('Email service not configured. Emails will be logged but not sent.');
-      logger.warn('To enable email sending, set SMTP_EMAIL and SMTP_PASSWORD in .env file');
-      logger.warn('For Gmail: Use App Password (not regular password) - https://support.google.com/accounts/answer/185833');
+    // In development, allow graceful degradation if SMTP not configured
+    if (config.nodeEnv === 'development' && (!smtpHost || !smtpPort || !smtpUser || !smtpPass)) {
+      logger.warn('📧 Email service not configured. Emails will be logged but not sent.');
+      logger.warn('To enable email sending, set SMTP_HOST, SMTP_PORT, SMTP_EMAIL, and SMTP_PASSWORD in .env file');
       return;
     }
 
-    if (!smtpUser || !smtpPass) {
-      logger.warn('SMTP credentials not fully configured. Email service will log emails but not send.');
+    // In production, fail explicitly if SMTP is not configured
+    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
+      logger.error('❌ SMTP ENV VARIABLES MISSING — EMAIL WILL NOT SEND');
+      logger.error('Required: SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD');
       return;
     }
+
+    // For Brevo on Railway: Always use STARTTLS (secure: false)
+    // Railway often blocks port 587, so use port 2525 as alternative
+    // Brevo supports both 587 and 2525 with STARTTLS
+    const smtpSecure = false;
 
     try {
       this.transporter = nodemailer.createTransport({
         host: smtpHost,
         port: smtpPort,
-        secure: smtpSecure, // false for 587 (STARTTLS), true for 465 (SSL)
+        secure: smtpSecure, // Always false for Brevo (STARTTLS) - required for Railway
         auth: {
           user: smtpUser,
           pass: smtpPass,
         },
-        // TLS configuration for Gmail
         tls: {
           rejectUnauthorized: false, // Accept self-signed certs (required for some cloud providers)
         },
       });
 
-      logger.info(`Email service initialized: ${smtpHost}:${smtpPort} (secure: ${smtpSecure}, user: ${smtpUser})`);
+      logger.info(`🚀 Brevo SMTP initialized: ${smtpHost}:${smtpPort} (secure: ${smtpSecure}, user: ${smtpUser})`);
       
       // Verify SMTP connection on startup (for debugging)
       this.transporter.verify((error: any, success: any) => {
@@ -69,7 +71,7 @@ export class EmailService {
             responseCode: error.responseCode,
           });
         } else {
-          logger.info('✅ SMTP connection verified successfully - ready to send emails');
+          logger.info('✅ Brevo SMTP verified & ready to send emails');
         }
       });
     } catch (error: any) {
@@ -112,8 +114,15 @@ export class EmailService {
    * Send email
    */
   async sendEmail(options: EmailOptions): Promise<void> {
-    const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_EMAIL || 'noreply@letechs.com';
+    // Brevo: FROM email must be explicitly set and verified in Brevo account
+    // Never fallback to SMTP_EMAIL (login email) as FROM address
+    const fromEmail = process.env.SMTP_FROM_EMAIL;
     const fromName = process.env.SMTP_FROM_NAME || 'LeTechs Copy Trading';
+
+    if (!fromEmail) {
+      logger.error('❌ SMTP_FROM_EMAIL not set - cannot send email');
+      throw new Error('SMTP_FROM_EMAIL environment variable is required');
+    }
 
     // In development without SMTP, just log the email
     if (!this.transporter) {
