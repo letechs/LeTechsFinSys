@@ -169,8 +169,12 @@ httpServer.listen(PORT, '::', () => {
   // DEFER ALL HEAVY SERVICES - Initialize after server is bound
   // This ensures Railway sees the server is alive immediately
   // Note: Routes are already loaded synchronously in app.ts (after health endpoints)
-  setImmediate(async () => {
+  // CRITICAL: Wrap in try-catch to prevent unhandled rejections from killing the process
+  (async () => {
     try {
+      // Small delay to ensure server is fully ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       // Initialize WebSocket server
       logger.info('🔌 Initializing WebSocket server...');
       webSocketService.initialize(httpServer);
@@ -197,6 +201,8 @@ httpServer.listen(PORT, '::', () => {
 
       logger.info(`✅ All background services initialized - server fully ready`);
     } catch (error: any) {
+      // CRITICAL: Never exit on background service errors - just log them
+      // The server must continue running even if services fail
       logger.error('❌ Background service initialization failed:', error);
       logger.error('Error details:', {
         message: error.message,
@@ -219,15 +225,32 @@ httpServer.listen(PORT, '::', () => {
           logger.warn('   Or set MONGODB_URI in .env file to your MongoDB connection string');
         }
       }
+      
+      // Explicitly prevent process exit - server must stay alive
+      logger.info('🔄 Server will continue running despite background service errors');
     }
+  })().catch((error) => {
+    // CRITICAL: Catch any unhandled rejections from the async IIFE
+    // This prevents the process from exiting due to unhandled promise rejections
+    logger.error('❌ Unhandled rejection in background service initialization:', error);
+    logger.error('🔄 Server will continue running - this error is non-fatal');
   });
 });
 
 // CRITICAL: Track process exit to debug premature shutdowns
+// Register this FIRST, before anything else
 process.on('exit', (code) => {
   console.log(`🔥 [PROCESS] PROCESS EXITED WITH CODE ${code} at ${new Date().toISOString()}`);
-  console.log(`🔥 [PROCESS] Exit stack trace:`, new Error().stack);
+  // Stack trace might not be available in exit handler, but try
+  try {
+    console.log(`🔥 [PROCESS] Exit stack trace:`, new Error().stack);
+  } catch (e) {
+    console.log(`🔥 [PROCESS] Could not get stack trace`);
+  }
 });
+
+// Note: uncaughtException and unhandledRejection handlers are registered later
+// to avoid duplicate handlers
 
 // Graceful shutdown handlers - ONLY in server.ts (removed duplicates from database.ts and redis.ts)
 let isShuttingDown = false;
@@ -284,20 +307,52 @@ const gracefulShutdown = async (signal: string) => {
   }, 10000);
 };
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+// Register signal handlers IMMEDIATELY - before server starts
+// This must be at module level, not inside a function
+console.log(`🔧 [SERVER] Registering signal handlers at ${new Date().toISOString()}...`);
 
-// Catch unhandled errors (but don't exit - let server continue)
+const sigtermHandler = () => {
+  const timestamp = new Date().toISOString();
+  console.log(`🔧 [SERVER] ${timestamp} - SIGTERM handler TRIGGERED (raw signal received)`);
+  console.log(`🔧 [SERVER] ${timestamp} - Calling gracefulShutdown('SIGTERM')...`);
+  gracefulShutdown('SIGTERM').catch((error) => {
+    console.error(`❌ [SERVER] Error in graceful shutdown:`, error);
+    process.exit(1);
+  });
+};
+
+const sigintHandler = () => {
+  const timestamp = new Date().toISOString();
+  console.log(`🔧 [SERVER] ${timestamp} - SIGINT handler TRIGGERED (raw signal received)`);
+  console.log(`🔧 [SERVER] ${timestamp} - Calling gracefulShutdown('SIGINT')...`);
+  gracefulShutdown('SIGINT').catch((error) => {
+    console.error(`❌ [SERVER] Error in graceful shutdown:`, error);
+    process.exit(1);
+  });
+};
+
+process.on('SIGTERM', sigtermHandler);
+process.on('SIGINT', sigintHandler);
+console.log(`✅ [SERVER] Signal handlers registered at ${new Date().toISOString()}`);
+
+// CRITICAL: Catch unhandled errors (but don't exit - let server continue)
+// These handlers prevent the process from exiting due to unhandled errors
+// Only register once to avoid duplicate handlers
 process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
-  console.error('❌ [PROCESS] Unhandled Promise Rejection:', reason);
+  const timestamp = new Date().toISOString();
+  console.error(`🔥 [PROCESS] ${timestamp} - UNHANDLED REJECTION:`, reason);
+  console.error(`🔥 [PROCESS] ${timestamp} - Promise:`, promise);
   logger.error('Unhandled Promise Rejection:', reason);
-  // Don't exit - let server continue running
+  // CRITICAL: Don't exit - let server continue running
+  // Railway will restart if needed, but we don't want to exit on every error
 });
 
 process.on('uncaughtException', (error: Error) => {
-  console.error('❌ [PROCESS] Uncaught Exception:', error);
-  console.error('❌ [PROCESS] Stack:', error.stack);
+  const timestamp = new Date().toISOString();
+  console.error(`🔥 [PROCESS] ${timestamp} - UNCAUGHT EXCEPTION:`, error);
+  console.error(`🔥 [PROCESS] ${timestamp} - Stack:`, error.stack);
   logger.error('Uncaught Exception:', error);
-  // Don't exit - let server continue running (Railway will restart if needed)
+  // CRITICAL: Don't exit - let server continue running (Railway will restart if needed)
+  // Exiting on uncaught exceptions can cause Railway to restart the container repeatedly
 });
 
