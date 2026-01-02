@@ -64,27 +64,41 @@ logger.info(`🌐 API URL: ${config.apiUrl}`);
 // This responds INSTANTLY before Express app is even touched
 // Railway health checks happen within 3 seconds - must respond immediately
 const httpServer = http.createServer((req, res) => {
-  // Log ALL incoming requests immediately
+  // Log ALL incoming requests immediately with timestamp
   const method = req.method || 'UNKNOWN';
   const url = req.url || '/';
-  console.log(`📥 [HTTP] ${method} ${url} - Incoming request`);
+  const timestamp = new Date().toISOString();
+  console.log(`📥 [HTTP] ${timestamp} ${method} ${url} - Incoming request`);
   
   // CRITICAL: Handle health checks IMMEDIATELY - no Express, no middleware, no blocking
   // Railway requires instant response - use plain text for fastest response
   const urlPath = url.split('?')[0];
   if (urlPath === '/' || urlPath === '/health') {
     // Respond instantly with plain text - Railway just needs 200 OK
-    res.writeHead(200, { 
-      'Content-Type': 'text/plain',
-      'Cache-Control': 'no-cache'
-    });
-    res.end('OK');
-    console.log(`✅ [HEALTH] ${method} ${url} → 200 OK (Railway health check passed)`);
+    try {
+      res.writeHead(200, { 
+        'Content-Type': 'text/plain',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      });
+      res.end('OK');
+      console.log(`✅ [HEALTH] ${timestamp} ${method} ${url} → 200 OK (Railway health check passed)`);
+    } catch (error: any) {
+      console.error(`❌ [HEALTH] ${timestamp} Error responding:`, error);
+    }
     return; // CRITICAL: Return immediately, don't pass to Express
   }
   
   // For all other routes, delegate to Express app
-  app(req, res);
+  try {
+    app(req, res);
+  } catch (error: any) {
+    console.error(`❌ [HTTP] Error handling request ${method} ${url}:`, error);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end('Internal Server Error');
+    }
+  }
 });
 
 // Add error handlers to catch any server errors
@@ -104,13 +118,29 @@ httpServer.on('clientError', (error: any, socket: any) => {
 });
 
 // Start server IMMEDIATELY - this keeps the event loop alive
+// Note: server.listen() makes the server ready to accept connections immediately
+// Railway can start health checking as soon as this is called
 httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 [SERVER] Server successfully bound to port ${PORT}`);
-  console.log(`✅ [SERVER] Health check ready - Railway can now verify the service`);
+  const readyTime = new Date().toISOString();
+  console.log(`🚀 [SERVER] ${readyTime} - Server successfully bound to port ${PORT}`);
+  console.log(`✅ [SERVER] ${readyTime} - Health check ready - Railway can now verify the service`);
   logger.info(`🚀 Server running on port ${PORT}`);
   logger.info(`📝 Environment: ${config.nodeEnv}`);
   logger.info(`🌐 API URL: ${config.apiUrl}`);
   logger.info(`✅ Server is alive - Railway health check will pass`);
+  
+  // Log that we're ready for health checks
+  console.log(`📊 [SERVER] Server is now listening and ready for health checks`);
+  console.log(`📊 [SERVER] Health check endpoint: http://0.0.0.0:${PORT}/health`);
+  console.log(`📊 [SERVER] Root endpoint: http://0.0.0.0:${PORT}/`);
+  
+  // Keep process alive - log every 10 seconds to show we're still running
+  const keepAliveInterval = setInterval(() => {
+    console.log(`💓 [SERVER] ${new Date().toISOString()} - Server is alive and running`);
+  }, 10000);
+  
+  // Store interval reference for cleanup
+  (global as any).keepAliveInterval = keepAliveInterval;
   
   // DEFER ALL HEAVY SERVICES - Initialize after server is bound
   // This ensures Railway sees the server is alive immediately
@@ -170,22 +200,40 @@ httpServer.listen(PORT, '0.0.0.0', () => {
 });
 
 // Graceful shutdown handlers
+let isShuttingDown = false;
+
 process.on('SIGTERM', () => {
-  console.log('🛑 [SERVER] SIGTERM received — shutting down gracefully');
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  const sigtermTime = new Date().toISOString();
+  console.log(`🛑 [SERVER] ${sigtermTime} - SIGTERM received — shutting down gracefully`);
   logger.info('SIGTERM received — shutting down gracefully');
   httpServer.close(() => {
-    console.log('✅ [SERVER] HTTP server closed');
+    console.log(`✅ [SERVER] ${new Date().toISOString()} - HTTP server closed`);
     process.exit(0);
   });
+  // Force exit after 10 seconds if server doesn't close
+  setTimeout(() => {
+    console.log(`⚠️ [SERVER] Forcing exit after 10 seconds`);
+    process.exit(0);
+  }, 10000);
 });
 
 process.on('SIGINT', () => {
-  console.log('🛑 [SERVER] SIGINT received — shutting down gracefully');
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  const sigintTime = new Date().toISOString();
+  console.log(`🛑 [SERVER] ${sigintTime} - SIGINT received — shutting down gracefully`);
   logger.info('SIGINT received — shutting down gracefully');
   httpServer.close(() => {
-    console.log('✅ [SERVER] HTTP server closed');
+    console.log(`✅ [SERVER] ${new Date().toISOString()} - HTTP server closed`);
     process.exit(0);
   });
+  // Force exit after 10 seconds if server doesn't close
+  setTimeout(() => {
+    console.log(`⚠️ [SERVER] Forcing exit after 10 seconds`);
+    process.exit(0);
+  }, 10000);
 });
 
 // Catch unhandled errors (but don't exit - let server continue)
