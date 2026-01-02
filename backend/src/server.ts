@@ -235,6 +235,25 @@ httpServer.listen(PORT, '::', () => {
     logger.error('❌ Unhandled rejection in background service initialization:', error);
     logger.error('🔄 Server will continue running - this error is non-fatal');
   });
+  
+  // CRITICAL: Explicitly keep the process alive
+  // The async IIFE above completes, but the server must continue running
+  // This log confirms the async IIFE has been started (not that it completed)
+  console.log('🔄 [SERVER] Background service initialization started (non-blocking)');
+  
+  // CRITICAL: Track beforeExit to catch when Node.js thinks it's done
+  // This will help us identify if Node.js is trying to exit prematurely
+  process.on('beforeExit', (code) => {
+    const exitTime = new Date().toISOString();
+    console.log(`🔥 [PROCESS] BEFORE EXIT EVENT FIRED WITH CODE ${code} at ${exitTime}`);
+    console.log(`🔥 [PROCESS] This means Node.js thinks the event loop is empty`);
+    console.log(`🔥 [PROCESS] Stack trace:`, new Error().stack);
+    // DO NOT call process.exit() here - this would cause premature shutdown
+    // The HTTP server should keep the process alive, so if we reach here, something is wrong
+    console.log(`🔥 [PROCESS] HTTP server should be keeping process alive - checking...`);
+    console.log(`🔥 [PROCESS] HTTP server listening: ${httpServer.listening}`);
+    console.log(`🔥 [PROCESS] HTTP server address: ${JSON.stringify(httpServer.address())}`);
+  });
 });
 
 // CRITICAL: Track process exit to debug premature shutdowns
