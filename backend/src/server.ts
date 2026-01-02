@@ -142,9 +142,11 @@ httpServer.on('connection', (socket: any) => {
 // Start server IMMEDIATELY - this keeps the event loop alive
 // Note: server.listen() makes the server ready to accept connections immediately
 // Railway can start health checking as soon as this is called
-httpServer.listen(PORT, '0.0.0.0', () => {
+// CRITICAL: Bind to '::' (IPv6) which also accepts IPv4 connections on Railway
+// Railway's health checks may come over IPv6, and binding to '0.0.0.0' only might fail
+httpServer.listen(PORT, '::', () => {
   const readyTime = new Date().toISOString();
-  console.log(`🚀 [SERVER] ${readyTime} - Server successfully bound to port ${PORT}`);
+  console.log(`🚀 [SERVER] ${readyTime} - Server successfully bound to port ${PORT} on IPv6 (::) - accepts both IPv4 and IPv6`);
   console.log(`✅ [SERVER] ${readyTime} - Health check ready - Railway can now verify the service`);
   logger.info(`🚀 Server running on port ${PORT}`);
   logger.info(`📝 Environment: ${config.nodeEnv}`);
@@ -153,8 +155,8 @@ httpServer.listen(PORT, '0.0.0.0', () => {
   
   // Log that we're ready for health checks
   console.log(`📊 [SERVER] Server is now listening and ready for health checks`);
-  console.log(`📊 [SERVER] Health check endpoint: http://0.0.0.0:${PORT}/health`);
-  console.log(`📊 [SERVER] Root endpoint: http://0.0.0.0:${PORT}/`);
+  console.log(`📊 [SERVER] Health check endpoint: http://[::]:${PORT}/health (also accessible via IPv4)`);
+  console.log(`📊 [SERVER] Root endpoint: http://[::]:${PORT}/ (also accessible via IPv4)`);
   
   // Keep process alive - log every 10 seconds to show we're still running
   const keepAliveInterval = setInterval(() => {
