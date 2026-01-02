@@ -104,9 +104,17 @@ export class LicenseService {
 
       const tier = baseTier; // For backward compatibility
 
-      // Check subscription expiry (use subscriptionRenewalDate if available, fallback to subscriptionExpiry)
+      // Check subscription expiry
       const now = new Date();
-      const expiryDate = user.subscriptionRenewalDate || user.subscriptionExpiry;
+      // Check if user is on active trial - if so, use trial expiry date
+      const hasActiveTrial = user.trialClaimed && 
+                            user.trialExpiryDate && 
+                            new Date(user.trialExpiryDate) > now;
+      
+      // Use trial expiry date if trial is active, otherwise use subscription renewal date
+      const expiryDate = hasActiveTrial 
+        ? user.trialExpiryDate 
+        : (user.subscriptionRenewalDate || user.subscriptionExpiry);
       
       // Check if expired and in grace period
       if (expiryDate && expiryDate < now) {
@@ -138,7 +146,7 @@ export class LicenseService {
       if (tier === SUBSCRIPTION_TIERS.FULL_ACCESS) {
         return {
           valid: true,
-          expiryDate: user.subscriptionExpiry?.toISOString(),
+          expiryDate: expiryDate?.toISOString(),
           allowedAccounts: mt5Accounts, // All accounts allowed for full access
           tier,
         };
@@ -168,7 +176,7 @@ export class LicenseService {
         if (invalidAccounts.length > 0) {
           return {
             valid: false,
-            expiryDate: user.subscriptionExpiry?.toISOString(),
+            expiryDate: expiryDate?.toISOString(),
             allowedAccounts: allowedAccountNumbers,
             tier,
             message: `Invalid account numbers: ${invalidAccounts.join(', ')}`,
@@ -178,7 +186,7 @@ export class LicenseService {
         // All accounts are valid
         return {
           valid: true,
-          expiryDate: user.subscriptionExpiry?.toISOString(),
+          expiryDate: expiryDate?.toISOString(),
           allowedAccounts: allowedAccountNumbers,
           tier,
         };
@@ -344,8 +352,11 @@ export class LicenseService {
 
       const tier = baseTier || (currentTier !== SUBSCRIPTION_TIERS.BASIC ? currentTier : SUBSCRIPTION_TIERS.EA_LICENSE); // For backward compatibility
 
-      // Check subscription expiry
-      const expiryDate = user.subscriptionRenewalDate || user.subscriptionExpiry;
+      // Check subscription expiry - use trial expiry if trial is active
+      // hasActiveTrial is already calculated above
+      const expiryDate = hasActiveTrial 
+        ? user.trialExpiryDate 
+        : (user.subscriptionRenewalDate || user.subscriptionExpiry);
       
       // Check if expired and in grace period
       if (expiryDate && expiryDate < now) {

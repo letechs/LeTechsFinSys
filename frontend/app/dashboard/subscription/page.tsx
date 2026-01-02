@@ -11,7 +11,7 @@ import toast from 'react-hot-toast'
 
 export default function SubscriptionPage() {
   const queryClient = useQueryClient()
-  const { tier, isExpired, expiryDate, subscription: hybridSubscription, isLoading: hybridLoading, invalidate: invalidateSubscription } = useSubscription()
+  const { tier, isExpired, expiryDate, subscription: hybridSubscription, isLoading: hybridLoading, invalidate: invalidateSubscription, isOnTrial, trialExpiryDate } = useSubscription()
   const searchParams = useSearchParams()
 
   // Fetch add-on pricing (public endpoint for authenticated users)
@@ -1635,33 +1635,48 @@ export default function SubscriptionPage() {
           )}
 
           {/* Renewal Date */}
-          {hybridSubscription.renewalDate && (
+          {/* Show expiry date: trial expiry if on trial, renewal date if paid subscription, or "No expiry" for BASIC */}
+          {(isOnTrial && trialExpiryDate) || (hybridSubscription.renewalDate && !isOnTrial) || (tier === 'BASIC' && !isOnTrial) ? (
             <div className="p-5 bg-gradient-to-r from-gray-50 to-gray-100/50 rounded-xl border border-gray-200 shadow-sm">
-              {/* Row 1: Renewal Date and Remaining Days (always same row) */}
+              {/* Row 1: Expiry Date and Remaining Days (always same row) */}
               <div className="flex items-center justify-between gap-4 mb-4 lg:mb-0">
-                {/* Renewal Date Info */}
+                {/* Expiry Date Info */}
                 <div className="flex items-center flex-1 min-w-0">
                   <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center mr-4 flex-shrink-0">
                     <Calendar className="w-5 h-5 text-primary-600" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Renewal Date</p>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                      {isOnTrial ? 'Trial Expiry Date' : tier === 'BASIC' ? 'Expiry Date' : 'Renewal Date'}
+                    </p>
                     <p className="text-lg font-bold text-gray-900">
-                      {new Date(hybridSubscription.renewalDate).toLocaleDateString()}
+                      {isOnTrial && trialExpiryDate
+                        ? trialExpiryDate.toLocaleDateString()
+                        : tier === 'BASIC' && !isOnTrial
+                        ? 'No expiry'
+                        : hybridSubscription.renewalDate
+                        ? new Date(hybridSubscription.renewalDate).toLocaleDateString()
+                        : 'No expiry set'}
                     </p>
                   </div>
                 </div>
                 
-                {/* Remaining Days */}
-                <div className="text-right flex-shrink-0">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Remaining</p>
-                  <p className="text-lg font-bold text-primary-600">
-                    {Math.ceil((new Date(hybridSubscription.renewalDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))} days
-                  </p>
-                </div>
+                {/* Remaining Days - only show if there's an expiry date */}
+                {((isOnTrial && trialExpiryDate) || (hybridSubscription.renewalDate && !isOnTrial)) && (
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Remaining</p>
+                    <p className="text-lg font-bold text-primary-600">
+                      {isOnTrial && trialExpiryDate
+                        ? `${Math.ceil((trialExpiryDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))} days`
+                        : hybridSubscription.renewalDate
+                        ? `${Math.ceil((new Date(hybridSubscription.renewalDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))} days`
+                        : ''}
+                    </p>
+                  </div>
+                )}
                 
-                {/* Desktop: Button in same row */}
-                {hybridSubscription.subscriptionTier !== 'BASIC' && (
+                {/* Desktop: Button in same row - only for paid subscriptions */}
+                {hybridSubscription.subscriptionTier !== 'BASIC' && !isOnTrial && (
                   <div className="hidden lg:block flex-shrink-0">
                     <button
                       onClick={handleRenewal}
@@ -1673,8 +1688,8 @@ export default function SubscriptionPage() {
                 )}
               </div>
               
-              {/* Row 2: Button (mobile/tablet - separate row) */}
-              {hybridSubscription.subscriptionTier !== 'BASIC' && (
+              {/* Row 2: Button (mobile/tablet - separate row) - only for paid subscriptions */}
+              {hybridSubscription.subscriptionTier !== 'BASIC' && !isOnTrial && (
                 <div className="lg:hidden">
                   <button
                     onClick={handleRenewal}
@@ -1685,7 +1700,7 @@ export default function SubscriptionPage() {
                 </div>
               )}
             </div>
-          )}
+          ) : null}
 
           {/* Manage Subscription Button (if has Stripe subscription) */}
           {hybridSubscription?.stripeSubscriptionId && (
@@ -1756,10 +1771,13 @@ export default function SubscriptionPage() {
             <div>
               <p className="text-sm text-gray-600 mb-1">Expiry Date</p>
               <p className="text-lg font-medium text-gray-900">
-                {expiryDate 
+                {isOnTrial && trialExpiryDate
+                  ? trialExpiryDate.toLocaleDateString() + ' (Trial)'
+                  : tier === 'BASIC' && !isOnTrial
+                  ? 'No expiry'
+                  : expiryDate 
                   ? expiryDate.toLocaleDateString()
-                  : 'No expiry set'
-                }
+                  : 'No expiry set'}
               </p>
             </div>
           </div>

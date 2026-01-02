@@ -491,10 +491,10 @@ export class SubscriptionController {
         }
       }
 
-      // Get users with pagination
+      // Get users with pagination - include trial fields for proper expiry calculation
       const skip = (Number(page) - 1) * Number(limit);
       const users = await User.find(query)
-        .select('_id email name subscriptionTier subscriptionExpiry subscriptionRenewalDate baseTier isActive emailVerified role createdAt')
+        .select('_id email name subscriptionTier subscriptionExpiry subscriptionRenewalDate baseTier isActive emailVerified role createdAt trialClaimed trialExpiryDate')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit))
@@ -512,7 +512,43 @@ export class SubscriptionController {
         const hadExpiredSubscription = subscription.subscriptionTier === 'BASIC' && subscription.baseTier !== null;
         
         // Calculate expiry status: check if expiry date has passed
-        const expiryDate = subscription.renewalDate || user.subscriptionExpiry;
+        // Priority: 1) Active trial expiry, 2) Paid subscription renewal, 3) BASIC tier = no expiry
+        let expiryDate: string | null = null;
+        
+        // Check for active trial first - this is what EA/MT5 uses for validation
+        // getHybridSubscription already returns trialClaimed and trialExpiryDate
+        if (subscription.trialClaimed && subscription.trialExpiryDate) {
+          // Get trial expiry date - handle both Date object and ISO string
+          const trialExpiry = subscription.trialExpiryDate instanceof Date 
+            ? subscription.trialExpiryDate 
+            : new Date(subscription.trialExpiryDate);
+          
+          // Only use trial expiry if it's valid and in the future (active trial)
+          if (!isNaN(trialExpiry.getTime()) && trialExpiry > now) {
+            expiryDate = trialExpiry.toISOString();
+          }
+        }
+        
+        // If no active trial expiry, check for paid subscription renewal date
+        if (!expiryDate) {
+          if (subscription.renewalDate) {
+            const renewal = subscription.renewalDate instanceof Date 
+              ? subscription.renewalDate 
+              : new Date(subscription.renewalDate);
+            if (!isNaN(renewal.getTime())) {
+              expiryDate = renewal.toISOString();
+            }
+          } else if (user.subscriptionExpiry) {
+            const legacyExpiry = user.subscriptionExpiry instanceof Date 
+              ? user.subscriptionExpiry 
+              : new Date(user.subscriptionExpiry);
+            if (!isNaN(legacyExpiry.getTime())) {
+              expiryDate = legacyExpiry.toISOString();
+            }
+          }
+        }
+        
+        // For BASIC tier users without trial or paid subscription, expiryDate remains null (no expiry)
         const isExpiredByDate = expiryDate ? new Date(expiryDate) < now : false;
         
         // For admin view: show expired if expiry date has passed OR if in grace period OR moved to BASIC after expiry

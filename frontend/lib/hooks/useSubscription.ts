@@ -42,9 +42,26 @@ export function useSubscription() {
 
   // Calculate tier and expiry
   const tier = subscription?.subscriptionTier || user?.subscriptionTier || 'BASIC'
-  const expiryDate = subscription?.renewalDate 
-    ? new Date(subscription.renewalDate) 
-    : (user?.subscriptionExpiry ? new Date(user.subscriptionExpiry) : null)
+  
+  // Check if user is on active trial
+  const isOnTrial = subscription?.trialClaimed && 
+                    subscription?.trialExpiryDate && 
+                    new Date(subscription.trialExpiryDate) > new Date()
+  
+  // Calculate expiry date based on trial status and tier
+  let expiryDate: Date | null = null
+  if (isOnTrial) {
+    // If trial is active, use trial expiry date
+    expiryDate = subscription?.trialExpiryDate ? new Date(subscription.trialExpiryDate) : null
+  } else if (tier === 'BASIC') {
+    // BASIC tier without trial has no expiry
+    expiryDate = null
+  } else {
+    // For paid subscriptions, use renewal date
+    expiryDate = subscription?.renewalDate 
+      ? new Date(subscription.renewalDate) 
+      : (user?.subscriptionExpiry ? new Date(user.subscriptionExpiry) : null)
+  }
   
   // Check if expired
   const now = new Date()
@@ -62,6 +79,10 @@ export function useSubscription() {
     tier: tier as 'BASIC' | 'EA_LICENSE' | 'FULL_ACCESS',
     isExpired,
     expiryDate,
+    
+    // Trial status
+    isOnTrial,
+    trialExpiryDate: subscription?.trialExpiryDate ? new Date(subscription.trialExpiryDate) : null,
     
     // Limits
     limits,
