@@ -300,6 +300,21 @@ const shutdown = async (signal: string) => {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
+// CRITICAL: Warn if running under npm - Railway MUST use "node dist/server.js" directly
+if (process.env.npm_lifecycle_event) {
+  console.error('');
+  console.error('🚨 [SERVER] CRITICAL ERROR: Running under npm!');
+  console.error('🚨 [SERVER] Railway is sending SIGTERM to npm (PID 1), not Node.js!');
+  console.error('🚨 [SERVER] This will cause graceful shutdown to fail.');
+  console.error('');
+  console.error('✅ [SERVER] FIX: In Railway → Settings → Start Command');
+  console.error('✅ [SERVER] Change from: npm start');
+  console.error('✅ [SERVER] Change to: node dist/server.js');
+  console.error('');
+  console.error('🚨 [SERVER] Until this is fixed, SIGTERM handler will NOT fire!');
+  console.error('');
+}
+
 // Note: unhandledRejection and uncaughtException handlers removed
 // Railway expects Node.js to exit naturally on fatal errors
 // These handlers were preventing Railway from managing container lifecycle properly
