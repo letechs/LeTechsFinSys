@@ -68,7 +68,9 @@ const httpServer = http.createServer((req, res) => {
   const method = req.method || 'UNKNOWN';
   const url = req.url || '/';
   const timestamp = new Date().toISOString();
-  console.log(`📥 [HTTP] ${timestamp} ${method} ${url} - Incoming request from ${req.socket.remoteAddress || 'unknown'}`);
+  const remoteAddress = req.socket.remoteAddress || 'unknown';
+  const userAgent = req.headers['user-agent'] || 'unknown';
+  console.log(`📥 [HTTP] ${timestamp} ${method} ${url} - Incoming request from ${remoteAddress} (${userAgent.substring(0, 50)})`);
   
   // CRITICAL: Handle health checks IMMEDIATELY - no Express, no middleware, no blocking
   // Railway requires instant response - use plain text for fastest response
@@ -89,7 +91,7 @@ const httpServer = http.createServer((req, res) => {
       res.writeHead(200, headers);
       res.end('OK');
       const responseTime = Date.now() - healthCheckStart;
-      console.log(`✅ [HEALTH] ${timestamp} ${method} ${url} → 200 OK (${responseTime}ms) - Railway health check passed`);
+      console.log(`✅ [HEALTH] ${timestamp} ${method} ${url} → 200 OK (${responseTime}ms) - Railway health check passed from ${remoteAddress}`);
     } catch (error: any) {
       console.error(`❌ [HEALTH] ${timestamp} Error responding:`, error);
       if (!res.headersSent) {
@@ -126,6 +128,15 @@ httpServer.on('error', (error: any) => {
 httpServer.on('clientError', (error: any, socket: any) => {
   console.error(`❌ [SERVER] Client error:`, error.message);
   socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+});
+
+// Track connection lifecycle for debugging
+httpServer.on('connection', (socket: any) => {
+  const remoteAddress = socket.remoteAddress || 'unknown';
+  console.log(`🔌 [SERVER] New connection from ${remoteAddress}`);
+  socket.on('close', () => {
+    console.log(`🔌 [SERVER] Connection closed from ${remoteAddress}`);
+  });
 });
 
 // Start server IMMEDIATELY - this keeps the event loop alive
@@ -214,18 +225,29 @@ httpServer.listen(PORT, '0.0.0.0', () => {
 let isShuttingDown = false;
 
 process.on('SIGTERM', () => {
-  if (isShuttingDown) return;
+  if (isShuttingDown) {
+    console.log(`🛑 [SERVER] ${new Date().toISOString()} - SIGTERM received again (already shutting down)`);
+    return;
+  }
   isShuttingDown = true;
   const sigtermTime = new Date().toISOString();
   console.log(`🛑 [SERVER] ${sigtermTime} - SIGTERM received — shutting down gracefully`);
+  console.log(`🛑 [SERVER] ${sigtermTime} - Active connections: ${(httpServer as any)._connections || 'unknown'}`);
   logger.info('SIGTERM received — shutting down gracefully');
+  
+  // Clear the keep-alive interval
+  if ((global as any).keepAliveInterval) {
+    clearInterval((global as any).keepAliveInterval);
+    console.log(`🛑 [SERVER] ${sigtermTime} - Cleared keep-alive interval`);
+  }
+  
   httpServer.close(() => {
     console.log(`✅ [SERVER] ${new Date().toISOString()} - HTTP server closed`);
     process.exit(0);
   });
   // Force exit after 10 seconds if server doesn't close
   setTimeout(() => {
-    console.log(`⚠️ [SERVER] Forcing exit after 10 seconds`);
+    console.log(`⚠️ [SERVER] ${new Date().toISOString()} - Forcing exit after 10 seconds`);
     process.exit(0);
   }, 10000);
 });
