@@ -33,7 +33,8 @@ export class EmailService {
 
     // In production, fail explicitly if SMTP is not configured
     if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
-      logger.error('❌ SMTP ENV VARIABLES MISSING — EMAIL WILL NOT SEND');
+      const errorMsg = '❌ SMTP ENV VARIABLES MISSING — REFUSING TO START';
+      logger.error(errorMsg);
       logger.error('Required: SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD');
       logger.error('Current values:', {
         SMTP_HOST: smtpHost || 'MISSING',
@@ -41,6 +42,12 @@ export class EmailService {
         SMTP_EMAIL: smtpUser || 'MISSING',
         SMTP_PASSWORD: smtpPass ? '***SET***' : 'MISSING',
       });
+      
+      // In production, throw error to prevent server from starting without email
+      if (config.nodeEnv === 'production') {
+        throw new Error(errorMsg);
+      }
+      
       this.transporter = null; // Explicitly set to null
       return;
     }

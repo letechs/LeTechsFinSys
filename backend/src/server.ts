@@ -1,7 +1,14 @@
+// Immediate console output - this runs before any imports
+console.log('🚀 [SERVER] Starting server initialization...');
+console.log('🚀 [SERVER] Node version:', process.version);
+console.log('🚀 [SERVER] NODE_ENV:', process.env.NODE_ENV || 'not set');
+console.log('🚀 [SERVER] PORT:', process.env.PORT || 'not set');
+
 // Import type definitions first (side-effect import for type augmentation)
 import './types/express';
 
 import http from 'http';
+
 // Check Node version before starting (Node 20 has TLS bug with Stripe on Windows)
 const nodeVersion = process.version;
 const majorVersion = parseInt(nodeVersion.split('.')[0].substring(1));
@@ -16,14 +23,32 @@ if (majorVersion === 20) {
   console.error('');
 }
 
+console.log('🚀 [SERVER] Starting module imports...');
+
 import app from './app';
+console.log('🚀 [SERVER] App imported');
+
 import { config } from './config/env';
+console.log('🚀 [SERVER] Config imported');
+
 import { connectDatabase } from './config/database';
+console.log('🚀 [SERVER] Database imported');
+
 import { connectRedis } from './config/redis';
+console.log('🚀 [SERVER] Redis imported');
+
 import { logger } from './utils/logger';
+console.log('🚀 [SERVER] Logger imported');
+
 import { webSocketService } from './services/realtime/websocketService';
+console.log('🚀 [SERVER] WebSocket service imported');
+
 import { accountStatusMonitor } from './services/mt5/accountStatusMonitor';
+console.log('🚀 [SERVER] Account status monitor imported');
+
 import mongoose from 'mongoose';
+console.log('🚀 [SERVER] Mongoose imported');
+console.log('🚀 [SERVER] All imports successful');
 
 const startServer = async () => {
   try {
@@ -77,9 +102,14 @@ const startServer = async () => {
     // Start account status monitor (checks for stale accounts and emits offline updates)
     accountStatusMonitor.start();
 
-    // Start server
-    httpServer.listen(config.port, '0.0.0.0', () => {
-      logger.info(`🚀 Server running on port ${config.port}`);
+    // Use Railway's PORT directly (required for Railway to detect the server)
+    const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : config.port;
+    console.log(`🚀 [SERVER] Binding to port ${PORT} (from ${process.env.PORT ? 'process.env.PORT' : 'config.port'})`);
+    
+    // Start server - MUST bind to 0.0.0.0 for Railway
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 [SERVER] Server successfully bound to port ${PORT}`);
+      logger.info(`🚀 Server running on port ${PORT}`);
       logger.info(`📝 Environment: ${config.nodeEnv}`);
       logger.info(`🌐 API URL: ${config.apiUrl}`);
       logger.info(`🔌 WebSocket server initialized`);
@@ -93,9 +123,12 @@ const startServer = async () => {
     
     // Handle server errors
     httpServer.on('error', (error: any) => {
+      console.error(`❌ [SERVER] HTTP Server error:`, error);
       logger.error('❌ HTTP Server error:', error);
       if (error.code === 'EADDRINUSE') {
-        logger.error(`Port ${config.port} is already in use. Please use a different port.`);
+        const port = process.env.PORT || config.port;
+        console.error(`❌ [SERVER] Port ${port} is already in use.`);
+        logger.error(`Port ${port} is already in use. Please use a different port.`);
       }
     });
   } catch (error) {
@@ -104,5 +137,17 @@ const startServer = async () => {
   }
 };
 
-startServer();
+// Wrap startup in try-catch to catch any import errors
+try {
+  startServer().catch((error) => {
+    console.error('❌ [SERVER] Unhandled error in startServer:', error);
+    console.error('❌ [SERVER] Error stack:', error.stack);
+    process.exit(1);
+  });
+} catch (error: any) {
+  console.error('❌ [SERVER] Fatal error during startup:', error);
+  console.error('❌ [SERVER] Error message:', error.message);
+  console.error('❌ [SERVER] Error stack:', error.stack);
+  process.exit(1);
+}
 
