@@ -64,3 +64,6 @@ temp/
 # MT5-EA/**/*.ex5
 # MT5-EA-License/**/*.ex5
 
+# Exception: Allow EA files in public directory for download (needed for production)
+!frontend/public/ea/*.ex5
+
