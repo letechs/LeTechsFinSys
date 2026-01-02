@@ -241,54 +241,27 @@ httpServer.listen(PORT, '::', () => {
   // This log confirms the async IIFE has been started (not that it completed)
   console.log('🔄 [SERVER] Background service initialization started (non-blocking)');
   
-  // CRITICAL: Track beforeExit to catch when Node.js thinks it's done
-  // This will help us identify if Node.js is trying to exit prematurely
-  process.on('beforeExit', (code) => {
-    const exitTime = new Date().toISOString();
-    console.log(`🔥 [PROCESS] BEFORE EXIT EVENT FIRED WITH CODE ${code} at ${exitTime}`);
-    console.log(`🔥 [PROCESS] This means Node.js thinks the event loop is empty`);
-    console.log(`🔥 [PROCESS] Stack trace:`, new Error().stack);
-    // DO NOT call process.exit() here - this would cause premature shutdown
-    // The HTTP server should keep the process alive, so if we reach here, something is wrong
-    console.log(`🔥 [PROCESS] HTTP server should be keeping process alive - checking...`);
-    console.log(`🔥 [PROCESS] HTTP server listening: ${httpServer.listening}`);
-    console.log(`🔥 [PROCESS] HTTP server address: ${JSON.stringify(httpServer.address())}`);
-  });
+  // Note: beforeExit handler removed - it was preventing Railway from managing container lifecycle
+  // Railway expects Node.js to exit naturally when parent process dies
 });
 
-// CRITICAL: Track process exit to debug premature shutdowns
-// Register this FIRST, before anything else
-process.on('exit', (code) => {
-  console.log(`🔥 [PROCESS] PROCESS EXITED WITH CODE ${code} at ${new Date().toISOString()}`);
-  // Stack trace might not be available in exit handler, but try
-  try {
-    console.log(`🔥 [PROCESS] Exit stack trace:`, new Error().stack);
-  } catch (e) {
-    console.log(`🔥 [PROCESS] Could not get stack trace`);
-  }
-});
-
-// Note: uncaughtException and unhandledRejection handlers are registered later
-// to avoid duplicate handlers
+// Note: process.on('exit') handler removed - it was preventing Railway from managing container lifecycle
+// Railway expects Node.js to exit naturally when parent process dies
 
 // Graceful shutdown handlers - ONLY in server.ts (removed duplicates from database.ts and redis.ts)
 let isShuttingDown = false;
 
-const gracefulShutdown = async (signal: string) => {
+// Simplified graceful shutdown - Railway expects clean exit
+const shutdown = async (signal: string) => {
   if (isShuttingDown) {
-    console.log(`🛑 [SERVER] ${new Date().toISOString()} - ${signal} received again (already shutting down)`);
     return;
   }
   isShuttingDown = true;
-  const shutdownTime = new Date().toISOString();
-  console.log(`🛑 [SERVER] ${shutdownTime} - ${signal} received — shutting down gracefully`);
-  console.log(`🛑 [SERVER] ${shutdownTime} - Active connections: ${(httpServer as any)._connections || 'unknown'}`);
-  logger.info(`${signal} received — shutting down gracefully`);
+  console.log(`🛑 [SERVER] Shutting down on ${signal}`);
   
   // Clear the keep-alive interval
   if ((global as any).keepAliveInterval) {
     clearInterval((global as any).keepAliveInterval);
-    console.log(`🛑 [SERVER] ${shutdownTime} - Cleared keep-alive interval`);
   }
   
   // Close MongoDB connection
@@ -296,10 +269,9 @@ const gracefulShutdown = async (signal: string) => {
     const mongoose = require('mongoose');
     if (mongoose.connection.readyState === 1) {
       await mongoose.connection.close();
-      console.log(`🛑 [SERVER] ${shutdownTime} - MongoDB connection closed`);
     }
   } catch (error: any) {
-    console.error(`❌ [SERVER] Error closing MongoDB:`, error.message);
+    // Ignore errors during shutdown
   }
   
   // Close Redis connection
@@ -307,93 +279,28 @@ const gracefulShutdown = async (signal: string) => {
     const { redisClient } = require('./config/redis');
     if (redisClient && redisClient.isOpen) {
       await redisClient.quit();
-      console.log(`🛑 [SERVER] ${shutdownTime} - Redis connection closed`);
     }
   } catch (error: any) {
-    console.error(`❌ [SERVER] Error closing Redis:`, error.message);
+    // Ignore errors during shutdown
   }
   
   // Close HTTP server
   httpServer.close(() => {
-    console.log(`✅ [SERVER] ${new Date().toISOString()} - HTTP server closed`);
     process.exit(0);
   });
   
-  // Force exit after 10 seconds if server doesn't close
+  // Force exit after 8 seconds if server doesn't close
   setTimeout(() => {
-    console.log(`⚠️ [SERVER] ${new Date().toISOString()} - Forcing exit after 10 seconds`);
-    process.exit(0);
-  }, 10000);
-};
-
-// CRITICAL: Register signal handlers IMMEDIATELY - before server starts
-// This must be at module level, not inside a function
-// Railway sends SIGTERM to the process - we must handle it properly
-console.log(`🔧 [SERVER] Registering signal handlers at ${new Date().toISOString()}...`);
-console.log(`🔧 [SERVER] Process PID: ${process.pid}`);
-console.log(`🔧 [SERVER] Process title: ${process.title}`);
-console.log(`🔧 [SERVER] Parent PID: ${process.ppid}`);
-console.log(`🔧 [SERVER] Process argv: ${JSON.stringify(process.argv)}`);
-console.log(`🔧 [SERVER] Process execPath: ${process.execPath}`);
-
-// CRITICAL: If we're running under npm, we need to ensure signals are forwarded
-// Railway might send SIGTERM to npm, but npm should forward it to Node.js
-// If not, we need to handle it differently
-if (process.env.npm_lifecycle_event) {
-  console.log(`⚠️ [SERVER] Running under npm (${process.env.npm_lifecycle_event})`);
-  console.log(`⚠️ [SERVER] npm should forward SIGTERM to Node.js, but if not, we'll handle it`);
-}
-
-const sigtermHandler = () => {
-  const timestamp = new Date().toISOString();
-  console.log(`🔧 [SERVER] ${timestamp} - SIGTERM handler TRIGGERED (raw signal received)`);
-  console.log(`🔧 [SERVER] ${timestamp} - Process PID: ${process.pid}`);
-  console.log(`🔧 [SERVER] ${timestamp} - Calling gracefulShutdown('SIGTERM')...`);
-  gracefulShutdown('SIGTERM').catch((error) => {
-    console.error(`❌ [SERVER] Error in graceful shutdown:`, error);
     process.exit(1);
-  });
+  }, 8000);
 };
 
-const sigintHandler = () => {
-  const timestamp = new Date().toISOString();
-  console.log(`🔧 [SERVER] ${timestamp} - SIGINT handler TRIGGERED (raw signal received)`);
-  console.log(`🔧 [SERVER] ${timestamp} - Process PID: ${process.pid}`);
-  console.log(`🔧 [SERVER] ${timestamp} - Calling gracefulShutdown('SIGINT')...`);
-  gracefulShutdown('SIGINT').catch((error) => {
-    console.error(`❌ [SERVER] Error in graceful shutdown:`, error);
-    process.exit(1);
-  });
-};
+// Simplified signal handlers - Railway will send SIGTERM directly to Node.js
+// (when start command is set to "node dist/server.js" instead of "npm start")
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
-// CRITICAL: Register handlers with 'once' to ensure they fire
-// Also register with 'on' to catch multiple signals
-process.once('SIGTERM', sigtermHandler);
-process.on('SIGTERM', sigtermHandler);
-process.once('SIGINT', sigintHandler);
-process.on('SIGINT', sigintHandler);
-
-console.log(`✅ [SERVER] Signal handlers registered at ${new Date().toISOString()}`);
-console.log(`✅ [SERVER] Listening for SIGTERM and SIGINT signals`);
-
-// CRITICAL: Catch unhandled errors (but don't exit - let server continue)
-// These handlers prevent the process from exiting due to unhandled errors
-// Only register once to avoid duplicate handlers
-process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
-  const timestamp = new Date().toISOString();
-  console.error(`🔥 [PROCESS] ${timestamp} - UNHANDLED REJECTION:`, reason);
-  console.error(`🔥 [PROCESS] ${timestamp} - Promise:`, promise);
-  logger.error('Unhandled Promise Rejection:', reason);
-  // CRITICAL: Don't exit - let server continue running
-  // Railway will restart if needed, but we don't want to exit on every error
-});
-
-process.on('uncaughtException', (error: Error) => {
-  const timestamp = new Date().toISOString();
-  console.error(`🔥 [PROCESS] ${timestamp} - UNCAUGHT EXCEPTION:`, error);
-  console.error(`🔥 [PROCESS] ${timestamp} - Stack:`, error.stack);
-  logger.error('Uncaught Exception:', error);
-  // CRITICAL: Don't exit - let server continue running (Railway will restart if needed)
-  // Exiting on uncaught exceptions can cause Railway to restart the container repeatedly
-});
+// Note: unhandledRejection and uncaughtException handlers removed
+// Railway expects Node.js to exit naturally on fatal errors
+// These handlers were preventing Railway from managing container lifecycle properly
 
