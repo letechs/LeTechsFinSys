@@ -35,6 +35,13 @@ export class EmailService {
     if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
       logger.error('❌ SMTP ENV VARIABLES MISSING — EMAIL WILL NOT SEND');
       logger.error('Required: SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD');
+      logger.error('Current values:', {
+        SMTP_HOST: smtpHost || 'MISSING',
+        SMTP_PORT: smtpPort || 'MISSING',
+        SMTP_EMAIL: smtpUser || 'MISSING',
+        SMTP_PASSWORD: smtpPass ? '***SET***' : 'MISSING',
+      });
+      this.transporter = null; // Explicitly set to null
       return;
     }
 
@@ -75,12 +82,13 @@ export class EmailService {
         }
       });
     } catch (error: any) {
-      logger.error('Failed to initialize email transporter:', error);
+      logger.error('❌ Failed to initialize email transporter:', error);
       logger.error('Error details:', {
         message: error.message,
         code: error.code,
         stack: error.stack,
       });
+      this.transporter = null; // Explicitly set to null on failure
     }
   }
 
@@ -111,6 +119,13 @@ export class EmailService {
   }
 
   /**
+   * Check if email service is ready to send emails
+   */
+  isReady(): boolean {
+    return this.transporter !== null;
+  }
+
+  /**
    * Send email
    */
   async sendEmail(options: EmailOptions): Promise<void> {
@@ -124,12 +139,22 @@ export class EmailService {
       throw new Error('SMTP_FROM_EMAIL environment variable is required');
     }
 
-    // In development without SMTP, just log the email
+    // Check if transporter is initialized
     if (!this.transporter) {
-      logger.info('📧 EMAIL (NOT SENT - SMTP not configured):');
-      logger.info(`   To: ${options.to}`);
-      logger.info(`   Subject: ${options.subject}`);
-      logger.info(`   Body: ${options.text || options.html.substring(0, 200)}...`);
+      const errorMsg = 'Email transporter not initialized. Cannot send email.';
+      logger.error(`❌ ${errorMsg}`);
+      logger.error('This usually means SMTP configuration failed during startup.');
+      logger.error('Check Railway logs for SMTP initialization errors.');
+      
+      // In production, throw error so it's caught and logged properly
+      if (config.nodeEnv === 'production') {
+        throw new Error(errorMsg);
+      }
+      
+      // In development, just log (don't throw to allow testing)
+      logger.warn('📧 EMAIL (NOT SENT - SMTP not configured):');
+      logger.warn(`   To: ${options.to}`);
+      logger.warn(`   Subject: ${options.subject}`);
       return;
     }
 
