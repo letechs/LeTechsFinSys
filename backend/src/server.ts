@@ -62,10 +62,39 @@ const startServer = async () => {
     const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : config.port;
     console.log(`🚀 [SERVER] Binding to port ${PORT} (from ${process.env.PORT ? 'process.env.PORT' : 'config.port'})`);
     
-    // Create HTTP server using Express app directly
-    // Health check endpoints are already defined FIRST in app.ts (before middleware)
-    // This ensures Railway health checks get immediate response
-    const httpServer = http.createServer(app);
+    // Create HTTP server with MINIMAL health check handler FIRST
+    // This responds INSTANTLY before Express app is even touched
+    // Railway health checks happen within 3 seconds - must respond immediately
+    const httpServer = http.createServer((req, res) => {
+      // Log ALL incoming requests immediately
+      const method = req.method || 'UNKNOWN';
+      const url = req.url || '/';
+      console.log(`📥 [HTTP] ${method} ${url} - Incoming request`);
+      
+      // CRITICAL: Handle health checks IMMEDIATELY - no Express, no middleware, no blocking
+      const urlPath = url.split('?')[0];
+      if (urlPath === '/' || urlPath === '/health') {
+        try {
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache'
+          });
+          res.end(JSON.stringify({ status: 'ok', time: new Date().toISOString() }));
+          console.log(`✅ [HEALTH] ${method} ${url} → 200 OK (Railway health check passed)`);
+          return; // CRITICAL: Return immediately, don't pass to Express
+        } catch (error: any) {
+          console.error(`❌ [HEALTH] Error:`, error);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'text/plain' });
+            res.end('Health check error');
+          }
+          return;
+        }
+      }
+      
+      // For all other routes, delegate to Express app
+      app(req, res);
+    });
     
     // Add error handlers to catch any server errors
     httpServer.on('error', (error: any) => {
@@ -94,14 +123,9 @@ const startServer = async () => {
       
       // DEFER ALL HEAVY SERVICES - Initialize after server is bound
       // This ensures Railway sees the server is alive immediately
+      // Note: Routes are already loaded synchronously in app.ts (after health endpoints)
       setImmediate(async () => {
         try {
-          // Load routes (deferred to avoid blocking health checks)
-          const appModule = await import('./app');
-          if (appModule.loadRoutes) {
-            appModule.loadRoutes();
-          }
-          
           // Initialize WebSocket server
           logger.info('🔌 Initializing WebSocket server...');
           webSocketService.initialize(httpServer);

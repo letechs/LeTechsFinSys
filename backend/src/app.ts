@@ -11,11 +11,13 @@ const app = express();
 
 // CRITICAL: Health check endpoints MUST be FIRST (before any middleware)
 // Railway health checks need immediate response without going through middleware
-app.get('/', (_req, res) => {
+app.get('/', (req, res) => {
+  console.log(`✅ [HEALTH] GET / → 200 OK (Railway health check)`);
   res.status(200).send('OK');
 });
 
-app.get('/health', (_req, res) => {
+app.get('/health', (req, res) => {
+  console.log(`✅ [HEALTH] GET /health → 200 OK (Railway health check)`);
   res.status(200).json({ 
     status: 'ok', 
     time: new Date().toISOString(),
@@ -120,8 +122,9 @@ app.use((err: any, req: any, res: any, next: any) => {
   next(err);
 });
 
-// Request logging (minimal - only errors logged)
+// Request logging - log ALL requests to debug Railway health checks
 app.use((req, res, next) => {
+  console.log(`📥 [REQUEST] ${req.method} ${req.url}`);
   next();
 });
 
@@ -144,10 +147,6 @@ app.get('/api', (req, res) => {
   });
 });
 
-// DEFER route imports - load them after server is listening to avoid blocking Railway health checks
-// Routes will be loaded in setImmediate after server binds (see server.ts)
-let routesLoaded = false;
-
 // Test EA endpoint (no auth required for testing)
 app.post('/test-ea', (req, res) => {
   logger.debug('EA test endpoint called', {
@@ -162,14 +161,11 @@ app.post('/test-ea', (req, res) => {
   });
 });
 
-// Lazy load routes - this will be called after server binds
-export const loadRoutes = () => {
-  if (routesLoaded) return;
-  routesLoaded = true;
-  const routes = require('./routes').default;
-  app.use('/api', routes);
-  console.log('✅ [APP] Routes loaded');
-};
+// Load routes synchronously - they need to be available immediately for API requests
+// Health endpoints are already defined first, so Railway health checks will work
+import routes from './routes';
+app.use('/api', routes);
+console.log('✅ [APP] Routes loaded');
 
 // Import error handlers
 import { notFoundHandler, errorHandler } from './middleware/errorHandler';
