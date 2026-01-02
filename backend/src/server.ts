@@ -326,13 +326,28 @@ const gracefulShutdown = async (signal: string) => {
   }, 10000);
 };
 
-// Register signal handlers IMMEDIATELY - before server starts
+// CRITICAL: Register signal handlers IMMEDIATELY - before server starts
 // This must be at module level, not inside a function
+// Railway sends SIGTERM to the process - we must handle it properly
 console.log(`🔧 [SERVER] Registering signal handlers at ${new Date().toISOString()}...`);
+console.log(`🔧 [SERVER] Process PID: ${process.pid}`);
+console.log(`🔧 [SERVER] Process title: ${process.title}`);
+console.log(`🔧 [SERVER] Parent PID: ${process.ppid}`);
+console.log(`🔧 [SERVER] Process argv: ${JSON.stringify(process.argv)}`);
+console.log(`🔧 [SERVER] Process execPath: ${process.execPath}`);
+
+// CRITICAL: If we're running under npm, we need to ensure signals are forwarded
+// Railway might send SIGTERM to npm, but npm should forward it to Node.js
+// If not, we need to handle it differently
+if (process.env.npm_lifecycle_event) {
+  console.log(`⚠️ [SERVER] Running under npm (${process.env.npm_lifecycle_event})`);
+  console.log(`⚠️ [SERVER] npm should forward SIGTERM to Node.js, but if not, we'll handle it`);
+}
 
 const sigtermHandler = () => {
   const timestamp = new Date().toISOString();
   console.log(`🔧 [SERVER] ${timestamp} - SIGTERM handler TRIGGERED (raw signal received)`);
+  console.log(`🔧 [SERVER] ${timestamp} - Process PID: ${process.pid}`);
   console.log(`🔧 [SERVER] ${timestamp} - Calling gracefulShutdown('SIGTERM')...`);
   gracefulShutdown('SIGTERM').catch((error) => {
     console.error(`❌ [SERVER] Error in graceful shutdown:`, error);
@@ -343,6 +358,7 @@ const sigtermHandler = () => {
 const sigintHandler = () => {
   const timestamp = new Date().toISOString();
   console.log(`🔧 [SERVER] ${timestamp} - SIGINT handler TRIGGERED (raw signal received)`);
+  console.log(`🔧 [SERVER] ${timestamp} - Process PID: ${process.pid}`);
   console.log(`🔧 [SERVER] ${timestamp} - Calling gracefulShutdown('SIGINT')...`);
   gracefulShutdown('SIGINT').catch((error) => {
     console.error(`❌ [SERVER] Error in graceful shutdown:`, error);
@@ -350,9 +366,15 @@ const sigintHandler = () => {
   });
 };
 
+// CRITICAL: Register handlers with 'once' to ensure they fire
+// Also register with 'on' to catch multiple signals
+process.once('SIGTERM', sigtermHandler);
 process.on('SIGTERM', sigtermHandler);
+process.once('SIGINT', sigintHandler);
 process.on('SIGINT', sigintHandler);
+
 console.log(`✅ [SERVER] Signal handlers registered at ${new Date().toISOString()}`);
+console.log(`✅ [SERVER] Listening for SIGTERM and SIGINT signals`);
 
 // CRITICAL: Catch unhandled errors (but don't exit - let server continue)
 // These handlers prevent the process from exiting due to unhandled errors
