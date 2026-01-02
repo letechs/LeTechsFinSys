@@ -66,16 +66,62 @@ const startServer = async () => {
     // This ensures Railway sees the server is alive BEFORE any heavy initialization
     // Health checks bypass all Express middleware for instant response
     const httpServer = http.createServer((req, res) => {
+      // Log ALL incoming requests for debugging
+      const method = req.method || 'UNKNOWN';
+      const url = req.url || 'UNKNOWN';
+      console.log(`📥 [REQUEST] ${method} ${url}`);
+      
       // CRITICAL: Immediate health check response - no Express, no middleware, no blocking
       // Railway checks these endpoints within 3 seconds - must respond instantly
-      if (req.url === '/' || req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', time: new Date().toISOString() }));
-        console.log(`✅ [HEALTH] ${req.url} → 200 OK (Railway health check passed)`);
+      // Handle health checks with or without query parameters
+      const urlPath = url.split('?')[0]; // Remove query parameters
+      if (urlPath === '/' || urlPath === '/health') {
+        try {
+          res.writeHead(200, { 
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache'
+          });
+          res.end(JSON.stringify({ status: 'ok', time: new Date().toISOString() }));
+          console.log(`✅ [HEALTH] ${url} → 200 OK (Railway health check passed)`);
+        } catch (error: any) {
+          console.error(`❌ [HEALTH] Error responding to health check:`, error);
+          try {
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'text/plain' });
+              res.end('Health check error');
+            }
+          } catch (e) {
+            // Response already sent or connection closed
+          }
+        }
         return;
       }
       // For all other routes, delegate to Express app (with full middleware stack)
-      app(req, res);
+      try {
+        app(req, res);
+      } catch (error: any) {
+        console.error(`❌ [SERVER] Error in Express app handler:`, error);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal server error');
+        }
+      }
+    });
+    
+    // Add error handlers to catch any server errors
+    httpServer.on('error', (error: any) => {
+      console.error(`❌ [SERVER] HTTP Server error:`, error);
+      logger.error('❌ HTTP Server error:', error);
+      if (error.code === 'EADDRINUSE') {
+        const port = process.env.PORT || config.port;
+        console.error(`❌ [SERVER] Port ${port} is already in use.`);
+        logger.error(`Port ${port} is already in use. Please use a different port.`);
+      }
+    });
+    
+    httpServer.on('clientError', (error: any, socket: any) => {
+      console.error(`❌ [SERVER] Client error:`, error.message);
+      socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
     });
     
     // Start server IMMEDIATELY - don't wait for anything (Railway needs to see the server alive)
@@ -142,34 +188,36 @@ const startServer = async () => {
         }
       });
     });
-    
-    // Handle server errors
-    httpServer.on('error', (error: any) => {
-      console.error(`❌ [SERVER] HTTP Server error:`, error);
-      logger.error('❌ HTTP Server error:', error);
-      if (error.code === 'EADDRINUSE') {
-        const port = process.env.PORT || config.port;
-        console.error(`❌ [SERVER] Port ${port} is already in use.`);
-        logger.error(`Port ${port} is already in use. Please use a different port.`);
-      }
-    });
   } catch (error) {
     logger.error('Failed to start server:', error);
     process.exit(1);
   }
 };
 
+// CRITICAL: Catch all unhandled errors that might cause Railway to kill the container
+process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+  console.error('❌ [PROCESS] Unhandled Promise Rejection:', reason);
+  console.error('❌ [PROCESS] Promise:', promise);
+  // Don't exit - let server continue running
+});
+
+process.on('uncaughtException', (error: Error) => {
+  console.error('❌ [PROCESS] Uncaught Exception:', error);
+  console.error('❌ [PROCESS] Stack:', error.stack);
+  // Don't exit - let server continue running (Railway will restart if needed)
+});
+
 // Wrap startup in try-catch to catch any import errors
 try {
   startServer().catch((error) => {
     console.error('❌ [SERVER] Unhandled error in startServer:', error);
     console.error('❌ [SERVER] Error stack:', error.stack);
-    process.exit(1);
+    // Don't exit - let Railway handle it
   });
 } catch (error: any) {
   console.error('❌ [SERVER] Fatal error during startup:', error);
   console.error('❌ [SERVER] Error message:', error.message);
   console.error('❌ [SERVER] Error stack:', error.stack);
-  process.exit(1);
+  // Don't exit - let Railway handle it
 }
 
