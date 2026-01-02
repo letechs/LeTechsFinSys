@@ -27,13 +27,31 @@ import mongoose from 'mongoose';
 
 const startServer = async () => {
   try {
+    // Log startup info immediately
+    logger.info('🚀 Starting server...');
+    logger.info(`📝 Environment: ${config.nodeEnv}`);
+    logger.info(`🔌 Port: ${config.port}`);
+    logger.info(`🌐 API URL: ${config.apiUrl}`);
+    
     // Connect to database
     try {
+      logger.info('📦 Connecting to MongoDB...');
       await connectDatabase();
     } catch (error: any) {
+      logger.error('❌ MongoDB connection failed:', error);
+      logger.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        name: error.name,
+      });
+      
       if (config.nodeEnv === 'production') {
-        logger.error('Failed to connect to MongoDB. Server cannot start without database in production.');
-        logger.error('Please ensure MongoDB is running and accessible.');
+        logger.error('❌ Server cannot start without database in production.');
+        logger.error('Please ensure MONGODB_URI is set correctly in Railway environment variables.');
+        logger.error('Current MONGODB_URI:', config.mongodbUri ? 'SET (but connection failed)' : 'NOT SET');
+        
+        // Give logger time to flush before exiting
+        await new Promise(resolve => setTimeout(resolve, 1000));
         process.exit(1);
       } else {
         logger.warn('⚠️  MongoDB connection failed. Server will start but database features will not work.');
@@ -60,15 +78,24 @@ const startServer = async () => {
     accountStatusMonitor.start();
 
     // Start server
-    httpServer.listen(config.port, () => {
+    httpServer.listen(config.port, '0.0.0.0', () => {
       logger.info(`🚀 Server running on port ${config.port}`);
       logger.info(`📝 Environment: ${config.nodeEnv}`);
       logger.info(`🌐 API URL: ${config.apiUrl}`);
       logger.info(`🔌 WebSocket server initialized`);
+      logger.info(`✅ Server startup complete - ready to accept connections`);
       if (config.nodeEnv !== 'production') {
         if (!mongoose.connection.readyState) {
           logger.warn('⚠️  MongoDB is not connected. Some features may not work.');
         }
+      }
+    });
+    
+    // Handle server errors
+    httpServer.on('error', (error: any) => {
+      logger.error('❌ HTTP Server error:', error);
+      if (error.code === 'EADDRINUSE') {
+        logger.error(`Port ${config.port} is already in use. Please use a different port.`);
       }
     });
   } catch (error) {
