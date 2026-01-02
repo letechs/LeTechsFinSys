@@ -70,24 +70,17 @@ const httpServer = http.createServer((req, res) => {
   console.log(`📥 [HTTP] ${method} ${url} - Incoming request`);
   
   // CRITICAL: Handle health checks IMMEDIATELY - no Express, no middleware, no blocking
+  // Railway requires instant response - use plain text for fastest response
   const urlPath = url.split('?')[0];
   if (urlPath === '/' || urlPath === '/health') {
-    try {
-      res.writeHead(200, { 
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache'
-      });
-      res.end(JSON.stringify({ status: 'ok', time: new Date().toISOString() }));
-      console.log(`✅ [HEALTH] ${method} ${url} → 200 OK (Railway health check passed)`);
-      return; // CRITICAL: Return immediately, don't pass to Express
-    } catch (error: any) {
-      console.error(`❌ [HEALTH] Error:`, error);
-      if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'text/plain' });
-        res.end('Health check error');
-      }
-      return;
-    }
+    // Respond instantly with plain text - Railway just needs 200 OK
+    res.writeHead(200, { 
+      'Content-Type': 'text/plain',
+      'Cache-Control': 'no-cache'
+    });
+    res.end('OK');
+    console.log(`✅ [HEALTH] ${method} ${url} → 200 OK (Railway health check passed)`);
+    return; // CRITICAL: Return immediately, don't pass to Express
   }
   
   // For all other routes, delegate to Express app
