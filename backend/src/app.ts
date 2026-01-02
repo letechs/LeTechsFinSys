@@ -9,6 +9,20 @@ import { logger } from './utils/logger';
 
 const app = express();
 
+// CRITICAL: Health check endpoints MUST be FIRST (before any middleware)
+// Railway health checks need immediate response without going through middleware
+app.get('/', (_req, res) => {
+  res.status(200).send('OK');
+});
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    time: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
 // Trust proxy (important when behind reverse proxy like Nginx/Apache)
 // This allows req.ip, req.protocol, req.hostname to work correctly
 // Set to 1 in production to trust first proxy (reverse proxy)
@@ -111,8 +125,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Root endpoint
-app.get('/', (req, res) => {
+// Root endpoint (detailed) - after middleware for full API info
+app.get('/api', (req, res) => {
   res.json({
     success: true,
     message: 'MT5 Copy Trading API',
@@ -127,15 +141,6 @@ app.get('/', (req, res) => {
       commands: '/api/commands',
       webhooks: '/api/webhooks',
     },
-  });
-});
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
   });
 });
 
