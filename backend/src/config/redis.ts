@@ -61,9 +61,6 @@ export const connectRedis = async (): Promise<void> => {
   }
 };
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  await redisClient.quit();
-  logger.info('Redis connection closed');
-});
+// Note: Graceful shutdown is handled in server.ts
+// Do NOT add process.exit() here - it will cause premature shutdown
 

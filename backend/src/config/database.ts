@@ -39,36 +39,6 @@ mongoose.connection.on('error', (error) => {
   logger.error('MongoDB error:', error);
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  logger.info('Shutting down gracefully...');
-  
-  // Flush any pending history entries before shutdown
-  try {
-    await HistoryService.flushPendingEntries();
-    logger.info('Pending history entries flushed');
-  } catch (error) {
-    logger.error('Error flushing history entries:', error);
-  }
-  
-  await mongoose.connection.close();
-  logger.info('MongoDB connection closed due to app termination');
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  logger.info('Shutting down gracefully (SIGTERM)...');
-  
-  // Flush any pending history entries before shutdown
-  try {
-    await HistoryService.flushPendingEntries();
-    logger.info('Pending history entries flushed');
-  } catch (error) {
-    logger.error('Error flushing history entries:', error);
-  }
-  
-  await mongoose.connection.close();
-  logger.info('MongoDB connection closed due to app termination');
-  process.exit(0);
-});
+// Note: Graceful shutdown is handled in server.ts
+// Do NOT add process.exit() here - it will cause premature shutdown
 

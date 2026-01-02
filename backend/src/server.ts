@@ -223,53 +223,69 @@ httpServer.listen(PORT, '::', () => {
   });
 });
 
-// Graceful shutdown handlers
+// CRITICAL: Track process exit to debug premature shutdowns
+process.on('exit', (code) => {
+  console.log(`🔥 [PROCESS] PROCESS EXITED WITH CODE ${code} at ${new Date().toISOString()}`);
+  console.log(`🔥 [PROCESS] Exit stack trace:`, new Error().stack);
+});
+
+// Graceful shutdown handlers - ONLY in server.ts (removed duplicates from database.ts and redis.ts)
 let isShuttingDown = false;
 
-process.on('SIGTERM', () => {
+const gracefulShutdown = async (signal: string) => {
   if (isShuttingDown) {
-    console.log(`🛑 [SERVER] ${new Date().toISOString()} - SIGTERM received again (already shutting down)`);
+    console.log(`🛑 [SERVER] ${new Date().toISOString()} - ${signal} received again (already shutting down)`);
     return;
   }
   isShuttingDown = true;
-  const sigtermTime = new Date().toISOString();
-  console.log(`🛑 [SERVER] ${sigtermTime} - SIGTERM received — shutting down gracefully`);
-  console.log(`🛑 [SERVER] ${sigtermTime} - Active connections: ${(httpServer as any)._connections || 'unknown'}`);
-  logger.info('SIGTERM received — shutting down gracefully');
+  const shutdownTime = new Date().toISOString();
+  console.log(`🛑 [SERVER] ${shutdownTime} - ${signal} received — shutting down gracefully`);
+  console.log(`🛑 [SERVER] ${shutdownTime} - Active connections: ${(httpServer as any)._connections || 'unknown'}`);
+  logger.info(`${signal} received — shutting down gracefully`);
   
   // Clear the keep-alive interval
   if ((global as any).keepAliveInterval) {
     clearInterval((global as any).keepAliveInterval);
-    console.log(`🛑 [SERVER] ${sigtermTime} - Cleared keep-alive interval`);
+    console.log(`🛑 [SERVER] ${shutdownTime} - Cleared keep-alive interval`);
   }
   
+  // Close MongoDB connection
+  try {
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState === 1) {
+      await mongoose.connection.close();
+      console.log(`🛑 [SERVER] ${shutdownTime} - MongoDB connection closed`);
+    }
+  } catch (error: any) {
+    console.error(`❌ [SERVER] Error closing MongoDB:`, error.message);
+  }
+  
+  // Close Redis connection
+  try {
+    const { redisClient } = require('./config/redis');
+    if (redisClient && redisClient.isOpen) {
+      await redisClient.quit();
+      console.log(`🛑 [SERVER] ${shutdownTime} - Redis connection closed`);
+    }
+  } catch (error: any) {
+    console.error(`❌ [SERVER] Error closing Redis:`, error.message);
+  }
+  
+  // Close HTTP server
   httpServer.close(() => {
     console.log(`✅ [SERVER] ${new Date().toISOString()} - HTTP server closed`);
     process.exit(0);
   });
+  
   // Force exit after 10 seconds if server doesn't close
   setTimeout(() => {
     console.log(`⚠️ [SERVER] ${new Date().toISOString()} - Forcing exit after 10 seconds`);
     process.exit(0);
   }, 10000);
-});
+};
 
-process.on('SIGINT', () => {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
-  const sigintTime = new Date().toISOString();
-  console.log(`🛑 [SERVER] ${sigintTime} - SIGINT received — shutting down gracefully`);
-  logger.info('SIGINT received — shutting down gracefully');
-  httpServer.close(() => {
-    console.log(`✅ [SERVER] ${new Date().toISOString()} - HTTP server closed`);
-    process.exit(0);
-  });
-  // Force exit after 10 seconds if server doesn't close
-  setTimeout(() => {
-    console.log(`⚠️ [SERVER] Forcing exit after 10 seconds`);
-    process.exit(0);
-  }, 10000);
-});
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Catch unhandled errors (but don't exit - let server continue)
 process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
