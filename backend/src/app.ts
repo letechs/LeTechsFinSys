@@ -144,8 +144,9 @@ app.get('/api', (req, res) => {
   });
 });
 
-// Import routes
-import routes from './routes';
+// DEFER route imports - load them after server is listening to avoid blocking Railway health checks
+// Routes will be loaded in setImmediate after server binds (see server.ts)
+let routesLoaded = false;
 
 // Test EA endpoint (no auth required for testing)
 app.post('/test-ea', (req, res) => {
@@ -161,8 +162,14 @@ app.post('/test-ea', (req, res) => {
   });
 });
 
-// API routes
-app.use('/api', routes);
+// Lazy load routes - this will be called after server binds
+export const loadRoutes = () => {
+  if (routesLoaded) return;
+  routesLoaded = true;
+  const routes = require('./routes').default;
+  app.use('/api', routes);
+  console.log('✅ [APP] Routes loaded');
+};
 
 // Import error handlers
 import { notFoundHandler, errorHandler } from './middleware/errorHandler';

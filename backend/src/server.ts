@@ -62,51 +62,10 @@ const startServer = async () => {
     const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : config.port;
     console.log(`🚀 [SERVER] Binding to port ${PORT} (from ${process.env.PORT ? 'process.env.PORT' : 'config.port'})`);
     
-    // Create HTTP server with immediate health check handler
-    // This ensures Railway sees the server is alive BEFORE any heavy initialization
-    // Health checks bypass all Express middleware for instant response
-    const httpServer = http.createServer((req, res) => {
-      // Log ALL incoming requests for debugging
-      const method = req.method || 'UNKNOWN';
-      const url = req.url || 'UNKNOWN';
-      console.log(`📥 [REQUEST] ${method} ${url}`);
-      
-      // CRITICAL: Immediate health check response - no Express, no middleware, no blocking
-      // Railway checks these endpoints within 3 seconds - must respond instantly
-      // Handle health checks with or without query parameters
-      const urlPath = url.split('?')[0]; // Remove query parameters
-      if (urlPath === '/' || urlPath === '/health') {
-        try {
-          res.writeHead(200, { 
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache'
-          });
-          res.end(JSON.stringify({ status: 'ok', time: new Date().toISOString() }));
-          console.log(`✅ [HEALTH] ${url} → 200 OK (Railway health check passed)`);
-        } catch (error: any) {
-          console.error(`❌ [HEALTH] Error responding to health check:`, error);
-          try {
-            if (!res.headersSent) {
-              res.writeHead(500, { 'Content-Type': 'text/plain' });
-              res.end('Health check error');
-            }
-          } catch (e) {
-            // Response already sent or connection closed
-          }
-        }
-        return;
-      }
-      // For all other routes, delegate to Express app (with full middleware stack)
-      try {
-        app(req, res);
-      } catch (error: any) {
-        console.error(`❌ [SERVER] Error in Express app handler:`, error);
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'text/plain' });
-          res.end('Internal server error');
-        }
-      }
-    });
+    // Create HTTP server using Express app directly
+    // Health check endpoints are already defined FIRST in app.ts (before middleware)
+    // This ensures Railway health checks get immediate response
+    const httpServer = http.createServer(app);
     
     // Add error handlers to catch any server errors
     httpServer.on('error', (error: any) => {
@@ -137,6 +96,12 @@ const startServer = async () => {
       // This ensures Railway sees the server is alive immediately
       setImmediate(async () => {
         try {
+          // Load routes (deferred to avoid blocking health checks)
+          const appModule = await import('./app');
+          if (appModule.loadRoutes) {
+            appModule.loadRoutes();
+          }
+          
           // Initialize WebSocket server
           logger.info('🔌 Initializing WebSocket server...');
           webSocketService.initialize(httpServer);
