@@ -68,23 +68,34 @@ const httpServer = http.createServer((req, res) => {
   const method = req.method || 'UNKNOWN';
   const url = req.url || '/';
   const timestamp = new Date().toISOString();
-  console.log(`📥 [HTTP] ${timestamp} ${method} ${url} - Incoming request`);
+  console.log(`📥 [HTTP] ${timestamp} ${method} ${url} - Incoming request from ${req.socket.remoteAddress || 'unknown'}`);
   
   // CRITICAL: Handle health checks IMMEDIATELY - no Express, no middleware, no blocking
   // Railway requires instant response - use plain text for fastest response
+  // Railway health checks come from healthcheck.railway.app - must allow all origins
   const urlPath = url.split('?')[0];
   if (urlPath === '/' || urlPath === '/health') {
     // Respond instantly with plain text - Railway just needs 200 OK
+    const healthCheckStart = Date.now();
     try {
-      res.writeHead(200, { 
+      // Allow all origins for health checks (Railway uses healthcheck.railway.app)
+      const headers: { [key: string]: string } = {
         'Content-Type': 'text/plain',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      });
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*', // Allow Railway health checks from any origin
+      };
+      
+      res.writeHead(200, headers);
       res.end('OK');
-      console.log(`✅ [HEALTH] ${timestamp} ${method} ${url} → 200 OK (Railway health check passed)`);
+      const responseTime = Date.now() - healthCheckStart;
+      console.log(`✅ [HEALTH] ${timestamp} ${method} ${url} → 200 OK (${responseTime}ms) - Railway health check passed`);
     } catch (error: any) {
       console.error(`❌ [HEALTH] ${timestamp} Error responding:`, error);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Health check error');
+      }
     }
     return; // CRITICAL: Return immediately, don't pass to Express
   }
