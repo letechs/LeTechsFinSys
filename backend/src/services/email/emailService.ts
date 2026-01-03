@@ -306,5 +306,8 @@ export class EmailService {
   }
 }
 
+// Initialize email service
+console.log('📧 [EMAIL] Initializing EmailService...');
 export const emailService = new EmailService();
+console.log('📧 [EMAIL] EmailService instance created');
 

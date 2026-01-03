@@ -16,24 +16,30 @@ export class AuthController {
       // Validation is handled by runValidations middleware
       // Extract data from request body
       const { email, password, name } = req.body;
+      
+      console.log(`📝 [REGISTER] Registration attempt for: ${email}`);
 
       // Additional check for required fields (in case validation middleware didn't catch it)
       if (!email || !password || !name) {
         throw new ValidationError('Email, password, and name are required');
       }
 
+      console.log(`📝 [REGISTER] Calling authService.register for: ${email}`);
       const result = await authService.register({
         email,
         password,
         name,
       });
+      
+      console.log(`✅ [REGISTER] Registration successful for: ${email}`);
 
       res.status(201).json({
         success: true,
         message: 'User registered successfully',
         data: result,
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error(`❌ [REGISTER] Registration error for ${req.body?.email || 'unknown'}:`, error?.message || error);
       next(error);
     }
   };
