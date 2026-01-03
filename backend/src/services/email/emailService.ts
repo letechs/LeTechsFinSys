@@ -1,4 +1,3 @@
-const SibApiV3Sdk = require('@sendinblue/client');
 import { config } from '../../config/env';
 import { logger } from '../../utils/logger';
 
@@ -10,7 +9,9 @@ export interface EmailOptions {
 }
 
 export class EmailService {
-  private apiInstance: any = null;
+  private brevoApiKey: string | null = null;
+  private fromEmail: string | null = null;
+  private fromName: string = 'LeTechs Copy Trading';
   private isInitialized: boolean = false;
 
   constructor() {
@@ -71,100 +72,55 @@ export class EmailService {
       return;
     }
 
-    try {
-      // Initialize Brevo API client using SibApiV3Sdk
-      // The package exports ApiClient directly
-      const defaultClient = SibApiV3Sdk.ApiClient.instance;
-      
-      if (!defaultClient) {
-        throw new Error('ApiClient.instance is undefined - package may not be loaded correctly');
-      }
-      
-      // Configure API key authentication
-      const apiKey = defaultClient.authentications['api-key'];
-      if (!apiKey) {
-        throw new Error('api-key authentication not found in ApiClient');
-      }
-      apiKey.apiKey = brevoApiKey;
+    // Store configuration
+    this.brevoApiKey = brevoApiKey;
+    this.fromEmail = fromEmail;
+    this.fromName = fromName;
+    this.isInitialized = true;
 
-      // Initialize Transactional Emails API
-      this.apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-
-      // Verify API key is set
-      const apiKeyPreview = brevoApiKey.substring(0, 10) + '...';
-      console.log(`📧 [BREVO] ✅ API key configured: ${apiKeyPreview}`);
-      console.log('📧 [BREVO] ✅ Brevo API client initialized successfully');
-      console.log(`📧 [BREVO] From email: ${fromEmail} (${fromName})`);
-      
-      this.isInitialized = true;
-      logger.info('✅ Brevo API initialized & ready to send emails');
-      logger.info(`From email: ${fromEmail} (${fromName})`);
-    } catch (error: any) {
-      console.error('📧 [BREVO] ❌ Failed to initialize API client:', error.message);
-      console.error('📧 [BREVO] Error stack:', error.stack);
-      logger.error('❌ Failed to initialize Brevo API client:', error);
-      logger.error('Error details:', {
-        message: error.message,
-        stack: error.stack,
-      });
-      this.isInitialized = false;
-    }
+    const apiKeyPreview = brevoApiKey.substring(0, 10) + '...';
+    console.log(`📧 [BREVO] ✅ API key configured: ${apiKeyPreview}`);
+    console.log('📧 [BREVO] ✅ Brevo API client initialized successfully (using REST API)');
+    console.log(`📧 [BREVO] From email: ${fromEmail} (${fromName})`);
+    logger.info('✅ Brevo API initialized & ready to send emails (REST API)');
+    logger.info(`From email: ${fromEmail} (${fromName})`);
   }
 
   /**
    * Verify Brevo API connection
    */
   async verifyConnection(): Promise<boolean> {
-    if (!this.isInitialized || !this.apiInstance) {
+    if (!this.isInitialized || !this.brevoApiKey) {
       logger.warn('Brevo API not initialized. Cannot verify connection.');
       return false;
     }
 
-    // Brevo API doesn't have a direct "verify" endpoint
-    // We'll test by checking if API client is configured
-    try {
-      const defaultClient = SibApiV3Sdk.ApiClient.instance;
-      if (defaultClient && defaultClient.authentications['api-key']?.apiKey) {
-        logger.info('✅ Brevo API client is configured');
-        return true;
-      }
-      return false;
-    } catch (error: any) {
-      logger.error('❌ Brevo API verification failed:', error);
-      return false;
-    }
+    // For REST API, we can't easily verify without making a test request
+    // Just check if we have the API key
+    return this.brevoApiKey !== null;
   }
 
   /**
    * Check if email service is ready to send emails
    */
   isReady(): boolean {
-    return this.isInitialized && this.apiInstance !== null;
+    return this.isInitialized && this.brevoApiKey !== null && this.fromEmail !== null;
   }
 
   /**
-   * Send email using Brevo API
+   * Send email using Brevo REST API
    */
   async sendEmail(options: EmailOptions): Promise<void> {
     logger.info(`📧 [EMAIL] Attempting to send email to: ${options.to}, Subject: ${options.subject}`);
     
-    const fromEmail = process.env.SMTP_FROM_EMAIL;
-    const fromName = process.env.SMTP_FROM_NAME || 'LeTechs Copy Trading';
-
-    if (!fromEmail) {
-      logger.error('❌ SMTP_FROM_EMAIL not set - cannot send email');
-      throw new Error('SMTP_FROM_EMAIL environment variable is required');
-    }
-
-    // Check if API is initialized
     if (!this.isReady()) {
       const errorMsg = 'Brevo API not initialized. Cannot send email.';
       logger.error(`❌ ${errorMsg}`);
       logger.error('This usually means BREVO_API_KEY is missing or invalid.');
       logger.error('Config Check:', {
         BREVO_API_KEY: process.env.BREVO_API_KEY ? 'SET' : 'MISSING',
-        SMTP_FROM_EMAIL: fromEmail || 'MISSING',
-        SMTP_FROM_NAME: fromName || 'MISSING',
+        SMTP_FROM_EMAIL: this.fromEmail || 'MISSING',
+        SMTP_FROM_NAME: this.fromName || 'MISSING',
       });
       
       // In production, throw error so it's caught and logged properly
@@ -180,106 +136,90 @@ export class EmailService {
     }
 
     try {
-      // Create email object for Brevo API
-      const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-      sendSmtpEmail.subject = options.subject;
-      sendSmtpEmail.htmlContent = options.html;
-      sendSmtpEmail.textContent = options.text || options.html.replace(/<[^>]*>/g, ''); // Strip HTML for text version
-      sendSmtpEmail.sender = {
-        name: fromName,
-        email: fromEmail,
-      };
-      sendSmtpEmail.to = [
-        {
-          email: options.to,
+      // Prepare email payload for Brevo API
+      const emailPayload = {
+        sender: {
+          name: this.fromName!,
+          email: this.fromEmail!,
         },
-      ];
+        to: [
+          {
+            email: options.to,
+          },
+        ],
+        subject: options.subject,
+        htmlContent: options.html,
+        textContent: options.text || options.html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
+      };
 
-      console.log(`📧 [EMAIL] Sending email to ${options.to} from ${fromEmail}`);
+      console.log(`📧 [EMAIL] Sending email to ${options.to} from ${this.fromEmail}`);
       console.log(`📧 [EMAIL] Subject: ${options.subject}`);
-      logger.info(`📤 [EMAIL] Sending email to ${options.to} from ${fromEmail}`);
+      logger.info(`📤 [EMAIL] Sending email to ${options.to} from ${this.fromEmail}`);
 
-      // Send email via Brevo API with timeout
-      const sendPromise = this.apiInstance!.sendTransacEmail(sendSmtpEmail);
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Email send timeout after 30 seconds')), 30000);
+      // Send email via Brevo REST API
+      const apiUrl = 'https://api.brevo.com/v3/smtp/email';
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'api-key': this.brevoApiKey!,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(emailPayload),
       });
 
-      const response = await Promise.race([sendPromise, timeoutPromise]) as any;
+      // Handle response
+      if (!response.ok) {
+        const errorData: any = await response.json().catch(() => ({}));
+        const statusText = response.statusText || 'Unknown error';
+        const status = response.status;
+        
+        console.error(`❌ [EMAIL] Brevo API error: ${status} ${statusText}`);
+        console.error(`❌ [EMAIL] Error response:`, JSON.stringify(errorData, null, 2));
+        
+        logger.error(`❌ Failed to send email to ${options.to}:`, {
+          status,
+          statusText,
+          error: errorData,
+        });
+
+        let errorMessage = errorData?.message || errorData?.error || statusText;
+        
+        // Provide helpful error messages
+        if (status === 401) {
+          errorMessage = 'Brevo API authentication failed (401 Unauthorized). Please verify your BREVO_API_KEY is correct and has proper permissions. Also check IP authorization in Brevo dashboard (Settings → Security → Authorized IPs).';
+        } else if (status === 400) {
+          errorMessage = `Brevo API bad request (400). ${errorData?.message || 'Check email format and sender verification.'}`;
+        } else if (status === 402) {
+          errorMessage = 'Brevo account limit reached. Please check your Brevo account quota.';
+        } else if (status === 403) {
+          errorMessage = 'Brevo API access forbidden. Check your API key permissions and sender verification.';
+        }
+        
+        throw new Error(`Failed to send email: ${errorMessage}`);
+      }
+
+      const responseData: any = await response.json();
+      const messageId = responseData?.messageId || 'N/A';
       
-      console.log(`✅ [EMAIL] Email sent successfully to ${options.to}: ${response.messageId || 'N/A'}`);
-      logger.info(`✅ [EMAIL] Email sent successfully to ${options.to}: ${response.messageId || 'N/A'}`);
+      console.log(`✅ [EMAIL] Email sent successfully to ${options.to}: ${messageId}`);
+      logger.info(`✅ [EMAIL] Email sent successfully to ${options.to}: ${messageId}`);
     } catch (error: any) {
       console.error(`❌ [EMAIL] Failed to send email to ${options.to}:`, error?.message || error);
       console.error(`❌ [EMAIL] Error code: ${error?.code || 'unknown'}`);
       
       // Log full error details for debugging
-      console.error(`❌ [EMAIL] Full error:`, JSON.stringify(error, null, 2));
+      if (error?.stack) {
+        console.error(`❌ [EMAIL] Error stack:`, error.stack);
+      }
       logger.error(`❌ Failed to send email to ${options.to}:`, error);
+      logger.error('Email error details:', {
+        message: error?.message || error,
+        code: error?.code,
+        stack: error?.stack,
+      });
       
-      // Extract detailed error information
-      let errorMessage = error?.message || 'Unknown error';
-      let errorCode = error?.code || error?.statusCode || error?.response?.status || 'unknown';
-      let errorDetails: any = {};
-      
-      // Brevo API specific error handling
-      if (error?.response) {
-        // Axios-style error response
-        errorCode = error.response.status || errorCode;
-        if (error.response.body || error.response.data) {
-          errorDetails = error.response.body || error.response.data;
-          errorMessage = errorDetails.message || errorDetails.error || errorMessage;
-          
-          console.error(`❌ [EMAIL] Brevo API response status: ${error.response.status}`);
-          console.error(`❌ [EMAIL] Brevo API response body:`, JSON.stringify(errorDetails, null, 2));
-          
-          logger.error('Brevo API error details:', {
-            status: error.response.status,
-            statusText: error.response.statusText,
-            message: errorDetails.message || errorDetails.error,
-            code: errorDetails.code,
-            id: errorDetails.id,
-            fullResponse: errorDetails,
-          });
-        } else {
-          logger.error('Brevo API error (no response body):', {
-            status: error.response.status,
-            statusText: error.response.statusText,
-            headers: error.response.headers,
-          });
-        }
-      } else if (error?.body) {
-        // Direct body property
-        errorDetails = error.body;
-        errorMessage = error.body.message || errorMessage;
-        errorCode = error.body.code || errorCode;
-        
-        logger.error('Brevo API error details (body):', {
-          message: error.body.message,
-          code: error.body.code,
-          id: error.body.id,
-        });
-      } else {
-        logger.error('Email error details:', {
-          message: error?.message || error,
-          code: error?.code,
-          stack: error?.stack,
-        });
-      }
-
-      // Provide helpful error messages
-      if (errorCode === 401 || errorCode === '401' || errorMessage?.toLowerCase().includes('unauthorized') || errorMessage?.toLowerCase().includes('invalid api key')) {
-        errorMessage = 'Brevo API authentication failed (401 Unauthorized). Please verify your BREVO_API_KEY is correct and has proper permissions. Also check IP authorization in Brevo dashboard.';
-        console.error(`❌ [EMAIL] API Key check: ${process.env.BREVO_API_KEY ? 'SET (but may be invalid)' : 'MISSING'}`);
-      } else if (errorCode === 400 || errorCode === '400') {
-        errorMessage = `Brevo API bad request (400). ${errorDetails.message || 'Check email format and sender verification.'}`;
-      } else if (errorMessage?.includes('timeout')) {
-        errorMessage = 'Email send timeout - Brevo API did not respond in time.';
-      } else if (errorMessage?.toLowerCase().includes('sender') || errorMessage?.toLowerCase().includes('from')) {
-        errorMessage = `Sender email (${fromEmail}) must be verified in Brevo dashboard.`;
-      }
-      
-      throw new Error(`Failed to send email: ${errorMessage}`);
+      throw new Error(`Failed to send email: ${error?.message || 'Unknown error'}`);
     }
   }
 
