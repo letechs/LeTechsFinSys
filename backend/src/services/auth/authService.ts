@@ -5,7 +5,6 @@ import { UnauthorizedError, ConflictError, ValidationError } from '../../utils/e
 import { logger } from '../../utils/logger';
 import { emailVerificationService } from './emailVerificationService';
 import { validatePasswordStrength } from '../../utils/passwordValidation';
-import { waitForConnection } from '../../config/database';
 
 export interface RegisterData {
   email: string;
@@ -29,8 +28,11 @@ export class AuthService {
    */
   async register(data: RegisterData): Promise<AuthResponse> {
     try {
-      // Wait for MongoDB connection (will wait up to 5 seconds for reconnection)
-      await waitForConnection(5000);
+      // Check if MongoDB is connected
+      const mongoose = require('mongoose');
+      if (mongoose.connection.readyState !== 1) {
+        throw new Error('Database connection is not available. Please ensure MongoDB is running.');
+      }
 
       // Check if user already exists
       const existingUser = await User.findOne({ email: data.email.toLowerCase() });
@@ -94,8 +96,11 @@ export class AuthService {
     isActive?: boolean;
   }): Promise<IUser> {
     try {
-      // Wait for MongoDB connection (will wait up to 5 seconds for reconnection)
-      await waitForConnection(5000);
+      // Check if MongoDB is connected
+      const mongoose = require('mongoose');
+      if (mongoose.connection.readyState !== 1) {
+        throw new Error('Database connection is not available. Please ensure MongoDB is running.');
+      }
 
       // Check if user already exists
       const existingUser = await User.findOne({ email: data.email.toLowerCase() });
@@ -148,8 +153,11 @@ export class AuthService {
    */
   async login(data: LoginData): Promise<AuthResponse> {
     try {
-      // Wait for MongoDB connection (will wait up to 5 seconds for reconnection)
-      await waitForConnection(5000);
+      // Check if MongoDB is connected
+      const mongoose = require('mongoose');
+      if (mongoose.connection.readyState !== 1) {
+        throw new Error('Database connection is not available. Please ensure MongoDB is running.');
+      }
 
       // Find user by email
       const user = await User.findOne({ email: data.email.toLowerCase() });
