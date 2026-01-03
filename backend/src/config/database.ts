@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose, { ConnectionStates } from 'mongoose';
 import { config } from './env';
 import { logger } from '../utils/logger';
 import { HistoryService } from '../services/history/historyService';
@@ -61,7 +61,12 @@ mongoose.connection.on('connected', () => {
  * @returns Promise that resolves when connected, or rejects if timeout
  */
 export const waitForConnection = async (maxWaitMs: number = 5000): Promise<void> => {
-  if (mongoose.connection.readyState === 1) {
+  // Check if already connected
+  const isConnected = (): boolean => {
+    return mongoose.connection.readyState === ConnectionStates.connected;
+  };
+
+  if (isConnected()) {
     return; // Already connected
   }
 
@@ -70,7 +75,7 @@ export const waitForConnection = async (maxWaitMs: number = 5000): Promise<void>
   const maxAttempts = Math.ceil(maxWaitMs / checkInterval);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (mongoose.connection.readyState === 1) {
+    if (isConnected()) {
       return; // Connected
     }
     
