@@ -91,10 +91,31 @@ export class EmailService {
       console.log(`📧 [SMTP] ✅ Brevo SMTP transporter created: ${smtpHost}:${smtpPort} (user: ${smtpUser})`);
       logger.info(`🚀 Brevo SMTP initialized: ${smtpHost}:${smtpPort} (secure: ${smtpSecure}, user: ${smtpUser})`);
       
-      // Verify SMTP connection on startup (for debugging)
+      // Verify SMTP connection on startup (for debugging) with timeout
       console.log('📧 [SMTP] Verifying SMTP connection...');
-      this.transporter.verify((error: any, success: any) => {
-        if (error) {
+      const verifyPromise = new Promise<void>((resolve, reject) => {
+        this.transporter!.verify((error: any, success: any) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+      
+      // Add 10-second timeout for verification
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('SMTP verification timeout after 10 seconds - Railway may be blocking the connection'));
+        }, 10000);
+      });
+      
+      Promise.race([verifyPromise, timeoutPromise])
+        .then(() => {
+          console.log('📧 [SMTP] ✅ Connection verified successfully');
+          logger.info('✅ Brevo SMTP verified & ready to send emails');
+        })
+        .catch((error: any) => {
           console.error('📧 [SMTP] ❌ Connection verification failed:', error.message);
           logger.error('❌ SMTP connection verification failed:', error);
           logger.error('SMTP verify error details:', {
@@ -104,11 +125,7 @@ export class EmailService {
             response: error.response,
             responseCode: error.responseCode,
           });
-        } else {
-          console.log('📧 [SMTP] ✅ Connection verified successfully');
-          logger.info('✅ Brevo SMTP verified & ready to send emails');
-        }
-      });
+        });
     } catch (error: any) {
       console.error('📧 [SMTP] ❌ Failed to create transporter:', error.message);
       logger.error('❌ Failed to initialize email transporter:', error);
