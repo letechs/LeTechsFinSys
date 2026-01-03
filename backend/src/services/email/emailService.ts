@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import * as brevo from '@getbrevo/brevo';
 import { config } from '../../config/env';
 import { logger } from '../../utils/logger';
 
@@ -10,157 +10,117 @@ export interface EmailOptions {
 }
 
 export class EmailService {
-  private transporter: nodemailer.Transporter | null = null;
+  private apiClient: any = null;
+  private transactionalEmailsApi: any = null;
+  private isInitialized: boolean = false;
 
   constructor() {
-    this.initializeTransporter();
+    this.initializeBrevoApi();
   }
 
-  private initializeTransporter(): void {
-    console.log('📧 [SMTP] Starting SMTP initialization...');
-    console.log('📧 [SMTP] NODE_ENV:', config.nodeEnv);
+  private initializeBrevoApi(): void {
+    console.log('📧 [BREVO] Starting Brevo API initialization...');
+    console.log('📧 [BREVO] NODE_ENV:', config.nodeEnv);
     
-    // Brevo SMTP configuration - require explicit env vars (no Gmail fallback)
-    const smtpHost = process.env.SMTP_HOST;
-    const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : undefined;
-    // Brevo uses SMTP_EMAIL as the login username (e.g., 9f1ca6001@smtp-brevo.com)
-    const smtpUser = process.env.SMTP_EMAIL;
-    const smtpPass = process.env.SMTP_PASSWORD;
+    // Brevo API configuration - require BREVO_API_KEY
+    const brevoApiKey = process.env.BREVO_API_KEY;
+    const fromEmail = process.env.SMTP_FROM_EMAIL;
+    const fromName = process.env.SMTP_FROM_NAME || 'LeTechs Copy Trading';
 
-    console.log('📧 [SMTP] Config check:', {
-      SMTP_HOST: smtpHost || 'MISSING',
-      SMTP_PORT: smtpPort || 'MISSING',
-      SMTP_EMAIL: smtpUser || 'MISSING',
-      SMTP_PASSWORD: smtpPass ? 'SET' : 'MISSING',
+    console.log('📧 [BREVO] Config check:', {
+      BREVO_API_KEY: brevoApiKey ? 'SET' : 'MISSING',
+      SMTP_FROM_EMAIL: fromEmail || 'MISSING',
+      SMTP_FROM_NAME: fromName || 'MISSING',
     });
 
-    // In development, allow graceful degradation if SMTP not configured
-    if (config.nodeEnv === 'development' && (!smtpHost || !smtpPort || !smtpUser || !smtpPass)) {
-      console.warn('📧 [SMTP] Email service not configured (development mode). Emails will be logged but not sent.');
+    // In development, allow graceful degradation if API key not configured
+    if (config.nodeEnv === 'development' && !brevoApiKey) {
+      console.warn('📧 [BREVO] Email service not configured (development mode). Emails will be logged but not sent.');
       logger.warn('📧 Email service not configured. Emails will be logged but not sent.');
-      logger.warn('To enable email sending, set SMTP_HOST, SMTP_PORT, SMTP_EMAIL, and SMTP_PASSWORD in .env file');
+      logger.warn('To enable email sending, set BREVO_API_KEY in .env file');
       return;
     }
 
-    // In production, fail explicitly if SMTP is not configured
-    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
-      const errorMsg = '❌ SMTP ENV VARIABLES MISSING — REFUSING TO START';
-      console.error('📧 [SMTP]', errorMsg);
-      console.error('📧 [SMTP] Required: SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD');
+    // In production, fail explicitly if API key is not configured
+    if (!brevoApiKey) {
+      const errorMsg = '❌ BREVO_API_KEY MISSING — REFUSING TO START';
+      console.error('📧 [BREVO]', errorMsg);
+      console.error('📧 [BREVO] Required: BREVO_API_KEY');
       logger.error(errorMsg);
-      logger.error('Required: SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD');
-      logger.error('Current values:', {
-        SMTP_HOST: smtpHost || 'MISSING',
-        SMTP_PORT: smtpPort || 'MISSING',
-        SMTP_EMAIL: smtpUser || 'MISSING',
-        SMTP_PASSWORD: smtpPass ? '***SET***' : 'MISSING',
-      });
+      logger.error('Required: BREVO_API_KEY');
+      logger.error('Get your API key from: https://app.brevo.com/settings/keys/api');
       
       // In production, throw error to prevent server from starting without email
       if (config.nodeEnv === 'production') {
-        console.error('📧 [SMTP] Throwing error in production - server should not start');
+        console.error('📧 [BREVO] Throwing error in production - server should not start');
         throw new Error(errorMsg);
       }
       
-      console.warn('📧 [SMTP] Setting transporter to null (development mode)');
-      this.transporter = null; // Explicitly set to null
+      console.warn('📧 [BREVO] Setting API client to null (development mode)');
       return;
     }
-    
-    console.log('📧 [SMTP] All SMTP variables present, creating transporter...');
 
-    // For Brevo on Railway: 
-    // - Port 465: Use SSL/TLS (secure: true)
-    // - Port 587 or 2525: Use STARTTLS (secure: false)
-    // Railway often blocks ports 587 and 2525, so port 465 with SSL is recommended
-    const smtpSecure = smtpPort === 465;
+    if (!fromEmail) {
+      const errorMsg = '❌ SMTP_FROM_EMAIL MISSING — REQUIRED FOR EMAIL SENDING';
+      console.error('📧 [BREVO]', errorMsg);
+      logger.error(errorMsg);
+      logger.error('Required: SMTP_FROM_EMAIL (must be verified in Brevo dashboard)');
+      
+      if (config.nodeEnv === 'production') {
+        throw new Error(errorMsg);
+      }
+      return;
+    }
 
     try {
-      this.transporter = nodemailer.createTransport({
-        host: smtpHost,
-        port: smtpPort,
-        secure: smtpSecure, // true for port 465 (SSL), false for 587/2525 (STARTTLS)
-        auth: {
-          user: smtpUser,
-          pass: smtpPass,
-        },
-        tls: {
-          rejectUnauthorized: false, // Accept self-signed certs (required for some cloud providers)
-        },
-      });
+      // Initialize Brevo API client
+      const defaultClient = (brevo as any).ApiClient?.instance;
+      if (defaultClient) {
+        this.apiClient = defaultClient;
+        const apiKeyAuth = defaultClient.authentications['api-key'];
+        if (apiKeyAuth) {
+          apiKeyAuth.apiKey = brevoApiKey;
+        }
+      }
 
-      console.log(`📧 [SMTP] ✅ Brevo SMTP transporter created: ${smtpHost}:${smtpPort} (user: ${smtpUser})`);
-      logger.info(`🚀 Brevo SMTP initialized: ${smtpHost}:${smtpPort} (secure: ${smtpSecure}, user: ${smtpUser})`);
-      
-      // Verify SMTP connection on startup (for debugging) with timeout
-      console.log('📧 [SMTP] Verifying SMTP connection...');
-      const verifyPromise = new Promise<void>((resolve, reject) => {
-        this.transporter!.verify((error: any, success: any) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve();
-          }
-        });
-      });
-      
-      // Add 10-second timeout for verification
-      const timeoutPromise = new Promise<void>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error('SMTP verification timeout after 10 seconds - Railway may be blocking the connection'));
-        }, 10000);
-      });
-      
-      Promise.race([verifyPromise, timeoutPromise])
-        .then(() => {
-          console.log('📧 [SMTP] ✅ Connection verified successfully');
-          logger.info('✅ Brevo SMTP verified & ready to send emails');
-        })
-        .catch((error: any) => {
-          console.error('📧 [SMTP] ❌ Connection verification failed:', error.message);
-          logger.error('❌ SMTP connection verification failed:', error);
-          logger.error('SMTP verify error details:', {
-            message: error.message,
-            code: error.code,
-            command: error.command,
-            response: error.response,
-            responseCode: error.responseCode,
-          });
-        });
+      // Initialize Transactional Emails API
+      this.transactionalEmailsApi = new (brevo as any).TransactionalEmailsApi();
+
+      this.isInitialized = true;
+      console.log('📧 [BREVO] ✅ Brevo API client initialized successfully');
+      console.log(`📧 [BREVO] From email: ${fromEmail} (${fromName})`);
+      logger.info('✅ Brevo API initialized & ready to send emails');
+      logger.info(`From email: ${fromEmail} (${fromName})`);
     } catch (error: any) {
-      console.error('📧 [SMTP] ❌ Failed to create transporter:', error.message);
-      logger.error('❌ Failed to initialize email transporter:', error);
+      console.error('📧 [BREVO] ❌ Failed to initialize API client:', error.message);
+      logger.error('❌ Failed to initialize Brevo API client:', error);
       logger.error('Error details:', {
         message: error.message,
-        code: error.code,
         stack: error.stack,
       });
-      this.transporter = null; // Explicitly set to null on failure
+      this.isInitialized = false;
     }
   }
 
   /**
-   * Verify SMTP connection
+   * Verify Brevo API connection
    */
   async verifyConnection(): Promise<boolean> {
-    if (!this.transporter) {
-      logger.warn('Email transporter not initialized. Cannot verify connection.');
+    if (!this.isInitialized || !this.transactionalEmailsApi) {
+      logger.warn('Brevo API not initialized. Cannot verify connection.');
       return false;
     }
 
+    // Brevo API doesn't have a direct "verify" endpoint
+    // We'll test by checking if API client is configured
     try {
-      await this.transporter.verify();
-      logger.info('✅ SMTP connection verified successfully');
-      return true;
+      if (this.apiClient && this.apiClient.authentications['api-key']?.apiKey) {
+        logger.info('✅ Brevo API client is configured');
+        return true;
+      }
+      return false;
     } catch (error: any) {
-      logger.error('❌ SMTP connection verification failed:', error);
-      logger.error('Verification error details:', {
-        message: error.message,
-        code: error.code,
-        command: error.command,
-        response: error.response,
-        responseCode: error.responseCode,
-      });
+      logger.error('❌ Brevo API verification failed:', error);
       return false;
     }
   }
@@ -169,17 +129,15 @@ export class EmailService {
    * Check if email service is ready to send emails
    */
   isReady(): boolean {
-    return this.transporter !== null;
+    return this.isInitialized && this.transactionalEmailsApi !== null;
   }
 
   /**
-   * Send email
+   * Send email using Brevo API
    */
   async sendEmail(options: EmailOptions): Promise<void> {
     logger.info(`📧 [EMAIL] Attempting to send email to: ${options.to}, Subject: ${options.subject}`);
     
-    // Brevo: FROM email must be explicitly set and verified in Brevo account
-    // Never fallback to SMTP_EMAIL (login email) as FROM address
     const fromEmail = process.env.SMTP_FROM_EMAIL;
     const fromName = process.env.SMTP_FROM_NAME || 'LeTechs Copy Trading';
 
@@ -188,18 +146,15 @@ export class EmailService {
       throw new Error('SMTP_FROM_EMAIL environment variable is required');
     }
 
-    // Check if transporter is initialized
-    if (!this.transporter) {
-      const errorMsg = 'Email transporter not initialized. Cannot send email.';
+    // Check if API is initialized
+    if (!this.isReady()) {
+      const errorMsg = 'Brevo API not initialized. Cannot send email.';
       logger.error(`❌ ${errorMsg}`);
-      logger.error('This usually means SMTP configuration failed during startup.');
-      logger.error('Check Railway logs for SMTP initialization errors.');
-      logger.error('SMTP Config Check:', {
-        SMTP_HOST: process.env.SMTP_HOST || 'MISSING',
-        SMTP_PORT: process.env.SMTP_PORT || 'MISSING',
-        SMTP_EMAIL: process.env.SMTP_EMAIL || 'MISSING',
-        SMTP_PASSWORD: process.env.SMTP_PASSWORD ? 'SET' : 'MISSING',
+      logger.error('This usually means BREVO_API_KEY is missing or invalid.');
+      logger.error('Config Check:', {
+        BREVO_API_KEY: process.env.BREVO_API_KEY ? 'SET' : 'MISSING',
         SMTP_FROM_EMAIL: fromEmail || 'MISSING',
+        SMTP_FROM_NAME: fromName || 'MISSING',
       });
       
       // In production, throw error so it's caught and logged properly
@@ -208,57 +163,77 @@ export class EmailService {
       }
       
       // In development, just log (don't throw to allow testing)
-      logger.warn('📧 EMAIL (NOT SENT - SMTP not configured):');
+      logger.warn('📧 EMAIL (NOT SENT - Brevo API not configured):');
       logger.warn(`   To: ${options.to}`);
       logger.warn(`   Subject: ${options.subject}`);
       return;
     }
 
     try {
-      const mailOptions = {
-        from: `"${fromName}" <${fromEmail}>`,
-        to: options.to,
-        subject: options.subject,
-        html: options.html,
-        text: options.text || options.html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
+      // Create email object for Brevo API
+      const sendSmtpEmail = new (brevo as any).SendSmtpEmail();
+      sendSmtpEmail.subject = options.subject;
+      sendSmtpEmail.htmlContent = options.html;
+      sendSmtpEmail.textContent = options.text || options.html.replace(/<[^>]*>/g, ''); // Strip HTML for text version
+      sendSmtpEmail.sender = {
+        name: fromName,
+        email: fromEmail,
       };
+      sendSmtpEmail.to = [
+        {
+          email: options.to,
+        },
+      ];
 
       console.log(`📧 [EMAIL] Sending email to ${options.to} from ${fromEmail}`);
       console.log(`📧 [EMAIL] Subject: ${options.subject}`);
       logger.info(`📤 [EMAIL] Sending email to ${options.to} from ${fromEmail}`);
-      
-      // Add timeout to email sending (30 seconds)
-      const sendPromise = this.transporter.sendMail(mailOptions);
+
+      // Send email via Brevo API with timeout
+      const sendPromise = this.transactionalEmailsApi!.sendTransacEmail(sendSmtpEmail);
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Email send timeout after 30 seconds')), 30000);
       });
+
+      const response = await Promise.race([sendPromise, timeoutPromise]) as any;
       
-      const info = await Promise.race([sendPromise, timeoutPromise]) as any;
-      console.log(`✅ [EMAIL] Email sent successfully to ${options.to}: ${info.messageId}`);
-      logger.info(`✅ [EMAIL] Email sent successfully to ${options.to}: ${info.messageId}`);
+      console.log(`✅ [EMAIL] Email sent successfully to ${options.to}: ${response.messageId || 'N/A'}`);
+      logger.info(`✅ [EMAIL] Email sent successfully to ${options.to}: ${response.messageId || 'N/A'}`);
     } catch (error: any) {
       console.error(`❌ [EMAIL] Failed to send email to ${options.to}:`, error?.message || error);
       console.error(`❌ [EMAIL] Error code: ${error?.code || 'unknown'}`);
       logger.error(`❌ Failed to send email to ${options.to}:`, error);
-      logger.error('Email error details:', {
-        message: error?.message || error,
-        code: error?.code,
-        command: error?.command,
-        response: error?.response,
-        responseCode: error?.responseCode,
-        stack: error?.stack,
-      });
       
-      // Provide more helpful error messages for common Gmail errors
-      let errorMessage = error.message || 'Unknown error';
-      if (error.responseCode === 535) {
-        errorMessage = 'Gmail authentication failed. Please check your App Password.';
-      } else if (error.responseCode === 550 || error.responseCode === 553) {
-        errorMessage = `Gmail rejected the email. From address (${fromEmail}) must match the authenticated email address.`;
-      } else if (error.code === 'EAUTH') {
-        errorMessage = 'Email authentication failed. Check your SMTP credentials.';
-      } else if (error.code === 'ECONNECTION') {
-        errorMessage = 'Could not connect to SMTP server. Check your network connection.';
+      // Extract detailed error information
+      let errorMessage = error?.message || 'Unknown error';
+      let errorCode = error?.code || 'unknown';
+      
+      // Brevo API specific error handling
+      if (error?.response?.body) {
+        const errorBody = error.response.body;
+        errorMessage = errorBody.message || errorMessage;
+        errorCode = errorBody.code || errorCode;
+        
+        logger.error('Brevo API error details:', {
+          message: errorBody.message,
+          code: errorBody.code,
+          id: errorBody.id,
+        });
+      } else {
+        logger.error('Email error details:', {
+          message: error?.message || error,
+          code: error?.code,
+          stack: error?.stack,
+        });
+      }
+
+      // Provide helpful error messages
+      if (errorCode === 401 || errorMessage?.includes('Invalid API key')) {
+        errorMessage = 'Brevo API authentication failed. Please check your BREVO_API_KEY.';
+      } else if (errorMessage?.includes('timeout')) {
+        errorMessage = 'Email send timeout - Brevo API did not respond in time.';
+      } else if (errorMessage?.includes('sender')) {
+        errorMessage = `Sender email (${fromEmail}) must be verified in Brevo dashboard.`;
       }
       
       throw new Error(`Failed to send email: ${errorMessage}`);
@@ -362,4 +337,3 @@ export class EmailService {
 console.log('📧 [EMAIL] Initializing EmailService...');
 export const emailService = new EmailService();
 console.log('📧 [EMAIL] EmailService instance created');
-
