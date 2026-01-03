@@ -12,6 +12,9 @@ export const connectDatabase = async (): Promise<void> => {
       maxPoolSize: 10, // Maximum number of connections in the pool
       minPoolSize: 2, // Minimum number of connections to maintain
       maxIdleTimeMS: 30000, // Close connections after 30s of inactivity
+      // Mongoose 6+ automatically reconnects, but we can configure retry behavior
+      retryWrites: true,
+      retryReads: true,
     };
 
     await mongoose.connect(config.mongodbUri, options);
@@ -32,12 +35,54 @@ export const connectDatabase = async (): Promise<void> => {
 
 // Handle connection events
 mongoose.connection.on('disconnected', () => {
-  logger.warn('MongoDB disconnected');
+  logger.warn('MongoDB disconnected - attempting to reconnect...');
+  // Mongoose will automatically attempt to reconnect
 });
 
 mongoose.connection.on('error', (error) => {
   logger.error('MongoDB error:', error);
 });
+
+mongoose.connection.on('reconnected', () => {
+  logger.info('✅ MongoDB reconnected successfully');
+});
+
+mongoose.connection.on('connecting', () => {
+  logger.info('🔄 MongoDB connecting...');
+});
+
+mongoose.connection.on('connected', () => {
+  logger.info('✅ MongoDB connected');
+});
+
+/**
+ * Wait for MongoDB connection to be ready
+ * @param maxWaitMs Maximum time to wait in milliseconds (default: 5000ms)
+ * @returns Promise that resolves when connected, or rejects if timeout
+ */
+export const waitForConnection = async (maxWaitMs: number = 5000): Promise<void> => {
+  if (mongoose.connection.readyState === 1) {
+    return; // Already connected
+  }
+
+  const startTime = Date.now();
+  const checkInterval = 500; // Check every 500ms
+  const maxAttempts = Math.ceil(maxWaitMs / checkInterval);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (mongoose.connection.readyState === 1) {
+      return; // Connected
+    }
+    
+    if (Date.now() - startTime >= maxWaitMs) {
+      throw new Error('MongoDB connection timeout - database is not available');
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, checkInterval));
+  }
+
+  throw new Error('MongoDB connection timeout - database is not available');
+};
 
 // Note: Graceful shutdown is handled in server.ts
 // Do NOT add process.exit() here - it will cause premature shutdown
