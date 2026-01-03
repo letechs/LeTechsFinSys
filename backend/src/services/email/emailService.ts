@@ -17,6 +17,9 @@ export class EmailService {
   }
 
   private initializeTransporter(): void {
+    console.log('📧 [SMTP] Starting SMTP initialization...');
+    console.log('📧 [SMTP] NODE_ENV:', config.nodeEnv);
+    
     // Brevo SMTP configuration - require explicit env vars (no Gmail fallback)
     const smtpHost = process.env.SMTP_HOST;
     const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : undefined;
@@ -24,8 +27,16 @@ export class EmailService {
     const smtpUser = process.env.SMTP_EMAIL;
     const smtpPass = process.env.SMTP_PASSWORD;
 
+    console.log('📧 [SMTP] Config check:', {
+      SMTP_HOST: smtpHost || 'MISSING',
+      SMTP_PORT: smtpPort || 'MISSING',
+      SMTP_EMAIL: smtpUser || 'MISSING',
+      SMTP_PASSWORD: smtpPass ? 'SET' : 'MISSING',
+    });
+
     // In development, allow graceful degradation if SMTP not configured
     if (config.nodeEnv === 'development' && (!smtpHost || !smtpPort || !smtpUser || !smtpPass)) {
+      console.warn('📧 [SMTP] Email service not configured (development mode). Emails will be logged but not sent.');
       logger.warn('📧 Email service not configured. Emails will be logged but not sent.');
       logger.warn('To enable email sending, set SMTP_HOST, SMTP_PORT, SMTP_EMAIL, and SMTP_PASSWORD in .env file');
       return;
@@ -34,6 +45,8 @@ export class EmailService {
     // In production, fail explicitly if SMTP is not configured
     if (!smtpHost || !smtpPort || !smtpUser || !smtpPass) {
       const errorMsg = '❌ SMTP ENV VARIABLES MISSING — REFUSING TO START';
+      console.error('📧 [SMTP]', errorMsg);
+      console.error('📧 [SMTP] Required: SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD');
       logger.error(errorMsg);
       logger.error('Required: SMTP_HOST, SMTP_PORT, SMTP_EMAIL, SMTP_PASSWORD');
       logger.error('Current values:', {
@@ -45,12 +58,16 @@ export class EmailService {
       
       // In production, throw error to prevent server from starting without email
       if (config.nodeEnv === 'production') {
+        console.error('📧 [SMTP] Throwing error in production - server should not start');
         throw new Error(errorMsg);
       }
       
+      console.warn('📧 [SMTP] Setting transporter to null (development mode)');
       this.transporter = null; // Explicitly set to null
       return;
     }
+    
+    console.log('📧 [SMTP] All SMTP variables present, creating transporter...');
 
     // For Brevo on Railway: Always use STARTTLS (secure: false)
     // Railway often blocks port 587, so use port 2525 as alternative
@@ -71,11 +88,14 @@ export class EmailService {
         },
       });
 
+      console.log(`📧 [SMTP] ✅ Brevo SMTP transporter created: ${smtpHost}:${smtpPort} (user: ${smtpUser})`);
       logger.info(`🚀 Brevo SMTP initialized: ${smtpHost}:${smtpPort} (secure: ${smtpSecure}, user: ${smtpUser})`);
       
       // Verify SMTP connection on startup (for debugging)
+      console.log('📧 [SMTP] Verifying SMTP connection...');
       this.transporter.verify((error: any, success: any) => {
         if (error) {
+          console.error('📧 [SMTP] ❌ Connection verification failed:', error.message);
           logger.error('❌ SMTP connection verification failed:', error);
           logger.error('SMTP verify error details:', {
             message: error.message,
@@ -85,10 +105,12 @@ export class EmailService {
             responseCode: error.responseCode,
           });
         } else {
+          console.log('📧 [SMTP] ✅ Connection verified successfully');
           logger.info('✅ Brevo SMTP verified & ready to send emails');
         }
       });
     } catch (error: any) {
+      console.error('📧 [SMTP] ❌ Failed to create transporter:', error.message);
       logger.error('❌ Failed to initialize email transporter:', error);
       logger.error('Error details:', {
         message: error.message,
