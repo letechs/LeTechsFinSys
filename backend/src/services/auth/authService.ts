@@ -63,11 +63,14 @@ export class AuthService {
       });
 
       await user.save();
+      console.log(`✅ [AUTH] User saved to database: ${user.email} (ID: ${user._id})`);
       logger.info(`✅ User saved to database: ${user.email} (ID: ${user._id})`);
 
       // Send verification email (don't block registration if email fails)
+      console.log(`📧 [AUTH] Attempting to send verification email to: ${user.email}`);
       logger.info(`📧 Attempting to send verification email to: ${user.email}`);
       emailVerificationService.sendVerificationEmail(user._id.toString(), user.email).catch((error) => {
+        console.error(`❌ [AUTH] Failed to send verification email to ${user.email}:`, error?.message || error);
         logger.error(`❌ Failed to send verification email to ${user.email}:`, error);
         logger.error('Email error details:', {
           message: error?.message,
@@ -79,6 +82,7 @@ export class AuthService {
       // Generate JWT token
       const token = this.generateToken(user);
 
+      console.log(`✅ [AUTH] New user registered successfully: ${user.email}`);
       logger.info(`✅ New user registered successfully: ${user.email}`);
 
       return {
