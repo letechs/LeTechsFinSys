@@ -1,28 +1,9 @@
-import * as brevo from '@getbrevo/brevo';
+import * as SibApiV3Sdk from '@sendinblue/client';
 import { config } from '../../config/env';
 import { logger } from '../../utils/logger';
 
-// Try to import the correct Brevo SDK structure
-let ApiClient: any;
-let TransactionalEmailsApi: any;
-let SendSmtpEmail: any;
-
-try {
-  // Try the new @getbrevo/brevo package structure
-  if ((brevo as any).ApiClient) {
-    ApiClient = (brevo as any).ApiClient;
-    TransactionalEmailsApi = (brevo as any).TransactionalEmailsApi;
-    SendSmtpEmail = (brevo as any).SendSmtpEmail;
-  } else if ((brevo as any).default) {
-    // Try default export
-    const brevoDefault = (brevo as any).default;
-    ApiClient = brevoDefault.ApiClient;
-    TransactionalEmailsApi = brevoDefault.TransactionalEmailsApi;
-    SendSmtpEmail = brevoDefault.SendSmtpEmail;
-  }
-} catch (e) {
-  console.error('📧 [BREVO] Failed to import Brevo SDK:', e);
-}
+// Type-safe access to Brevo SDK
+const BrevoSDK = SibApiV3Sdk as any;
 
 export interface EmailOptions {
   to: string;
@@ -32,8 +13,7 @@ export interface EmailOptions {
 }
 
 export class EmailService {
-  private apiClient: any = null;
-  private transactionalEmailsApi: any = null;
+  private apiInstance: any = null;
   private isInitialized: boolean = false;
 
   constructor() {
@@ -95,75 +75,23 @@ export class EmailService {
     }
 
     try {
-      // Initialize Brevo API client - try multiple methods
-      let defaultClient: any = null;
+      // Initialize Brevo API client using SibApiV3Sdk
+      const defaultClient = BrevoSDK.ApiClient.instance;
       
-      // Method 1: Try ApiClient.instance (standard method)
-      if (ApiClient && ApiClient.instance) {
-        defaultClient = ApiClient.instance;
-        console.log('📧 [BREVO] Using ApiClient.instance method');
-      } 
-      // Method 2: Try creating new ApiClient
-      else if (ApiClient) {
-        defaultClient = new ApiClient();
-        console.log('📧 [BREVO] Using new ApiClient() method');
-      }
-      // Method 3: Try direct access from brevo object
-      else if ((brevo as any).ApiClient) {
-        const BrevoApiClient = (brevo as any).ApiClient;
-        if (BrevoApiClient.instance) {
-          defaultClient = BrevoApiClient.instance;
-          console.log('📧 [BREVO] Using brevo.ApiClient.instance method');
-        } else {
-          defaultClient = new BrevoApiClient();
-          console.log('📧 [BREVO] Using new brevo.ApiClient() method');
-        }
-      }
-
-      if (!defaultClient) {
-        throw new Error('Could not initialize Brevo ApiClient - package structure may have changed');
-      }
-
-      // Set API key
-      this.apiClient = defaultClient;
-      const apiKeyAuth = defaultClient.authentications?.['api-key'];
-      
-      if (apiKeyAuth) {
-        apiKeyAuth.apiKey = brevoApiKey;
-        const apiKeyPreview = brevoApiKey.substring(0, 10) + '...';
-        console.log(`📧 [BREVO] ✅ API key configured: ${apiKeyPreview}`);
-      } else {
-        // Alternative: Set API key directly on client
-        if (defaultClient.setApiKey) {
-          defaultClient.setApiKey(brevoApiKey);
-          console.log('📧 [BREVO] ✅ API key set via setApiKey method');
-        } else {
-          throw new Error('Could not set API key - authentications["api-key"] not found');
-        }
-      }
+      // Configure API key authentication
+      const apiKey = defaultClient.authentications['api-key'];
+      apiKey.apiKey = brevoApiKey;
 
       // Initialize Transactional Emails API
-      if (TransactionalEmailsApi) {
-        this.transactionalEmailsApi = new TransactionalEmailsApi();
-      } else if ((brevo as any).TransactionalEmailsApi) {
-        this.transactionalEmailsApi = new (brevo as any).TransactionalEmailsApi();
-      } else {
-        throw new Error('TransactionalEmailsApi not found in Brevo package');
-      }
+      this.apiInstance = new BrevoSDK.TransactionalEmailsApi();
 
       // Verify API key is set
-      const finalApiKey = defaultClient.authentications?.['api-key']?.apiKey || 
-                         defaultClient.apiKey ||
-                         brevoApiKey;
-      
-      if (finalApiKey) {
-        const apiKeyPreview = finalApiKey.substring(0, 10) + '...';
-        console.log(`📧 [BREVO] ✅ Verified API key: ${apiKeyPreview}`);
-      }
-
-      this.isInitialized = true;
+      const apiKeyPreview = brevoApiKey.substring(0, 10) + '...';
+      console.log(`📧 [BREVO] ✅ API key configured: ${apiKeyPreview}`);
       console.log('📧 [BREVO] ✅ Brevo API client initialized successfully');
       console.log(`📧 [BREVO] From email: ${fromEmail} (${fromName})`);
+      
+      this.isInitialized = true;
       logger.info('✅ Brevo API initialized & ready to send emails');
       logger.info(`From email: ${fromEmail} (${fromName})`);
     } catch (error: any) {
@@ -182,7 +110,7 @@ export class EmailService {
    * Verify Brevo API connection
    */
   async verifyConnection(): Promise<boolean> {
-    if (!this.isInitialized || !this.transactionalEmailsApi) {
+    if (!this.isInitialized || !this.apiInstance) {
       logger.warn('Brevo API not initialized. Cannot verify connection.');
       return false;
     }
@@ -190,7 +118,8 @@ export class EmailService {
     // Brevo API doesn't have a direct "verify" endpoint
     // We'll test by checking if API client is configured
     try {
-      if (this.apiClient && this.apiClient.authentications['api-key']?.apiKey) {
+      const defaultClient = BrevoSDK.ApiClient.instance;
+      if (defaultClient && defaultClient.authentications['api-key']?.apiKey) {
         logger.info('✅ Brevo API client is configured');
         return true;
       }
@@ -205,7 +134,7 @@ export class EmailService {
    * Check if email service is ready to send emails
    */
   isReady(): boolean {
-    return this.isInitialized && this.transactionalEmailsApi !== null;
+    return this.isInitialized && this.apiInstance !== null;
   }
 
   /**
@@ -247,15 +176,7 @@ export class EmailService {
 
     try {
       // Create email object for Brevo API
-      let sendSmtpEmail: any;
-      if (SendSmtpEmail) {
-        sendSmtpEmail = new SendSmtpEmail();
-      } else if ((brevo as any).SendSmtpEmail) {
-        sendSmtpEmail = new (brevo as any).SendSmtpEmail();
-      } else {
-        // Fallback: create plain object
-        sendSmtpEmail = {};
-      }
+      const sendSmtpEmail = new BrevoSDK.SendSmtpEmail();
       sendSmtpEmail.subject = options.subject;
       sendSmtpEmail.htmlContent = options.html;
       sendSmtpEmail.textContent = options.text || options.html.replace(/<[^>]*>/g, ''); // Strip HTML for text version
@@ -274,7 +195,7 @@ export class EmailService {
       logger.info(`📤 [EMAIL] Sending email to ${options.to} from ${fromEmail}`);
 
       // Send email via Brevo API with timeout
-      const sendPromise = this.transactionalEmailsApi!.sendTransacEmail(sendSmtpEmail);
+      const sendPromise = this.apiInstance!.sendTransacEmail(sendSmtpEmail);
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Email send timeout after 30 seconds')), 30000);
       });
@@ -300,20 +221,20 @@ export class EmailService {
       if (error?.response) {
         // Axios-style error response
         errorCode = error.response.status || errorCode;
-        if (error.response.data) {
-          errorDetails = error.response.data;
-          errorMessage = error.response.data.message || error.response.data.error || errorMessage;
+        if (error.response.body || error.response.data) {
+          errorDetails = error.response.body || error.response.data;
+          errorMessage = errorDetails.message || errorDetails.error || errorMessage;
           
           console.error(`❌ [EMAIL] Brevo API response status: ${error.response.status}`);
-          console.error(`❌ [EMAIL] Brevo API response body:`, JSON.stringify(error.response.data, null, 2));
+          console.error(`❌ [EMAIL] Brevo API response body:`, JSON.stringify(errorDetails, null, 2));
           
           logger.error('Brevo API error details:', {
             status: error.response.status,
             statusText: error.response.statusText,
-            message: error.response.data.message || error.response.data.error,
-            code: error.response.data.code,
-            id: error.response.data.id,
-            fullResponse: error.response.data,
+            message: errorDetails.message || errorDetails.error,
+            code: errorDetails.code,
+            id: errorDetails.id,
+            fullResponse: errorDetails,
           });
         } else {
           logger.error('Brevo API error (no response body):', {
@@ -343,7 +264,7 @@ export class EmailService {
 
       // Provide helpful error messages
       if (errorCode === 401 || errorCode === '401' || errorMessage?.toLowerCase().includes('unauthorized') || errorMessage?.toLowerCase().includes('invalid api key')) {
-        errorMessage = 'Brevo API authentication failed (401 Unauthorized). Please verify your BREVO_API_KEY is correct and has proper permissions.';
+        errorMessage = 'Brevo API authentication failed (401 Unauthorized). Please verify your BREVO_API_KEY is correct and has proper permissions. Also check IP authorization in Brevo dashboard.';
         console.error(`❌ [EMAIL] API Key check: ${process.env.BREVO_API_KEY ? 'SET (but may be invalid)' : 'MISSING'}`);
       } else if (errorCode === 400 || errorCode === '400') {
         errorMessage = `Brevo API bad request (400). ${errorDetails.message || 'Check email format and sender verification.'}`;
