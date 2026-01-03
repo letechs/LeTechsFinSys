@@ -2,6 +2,28 @@ import * as brevo from '@getbrevo/brevo';
 import { config } from '../../config/env';
 import { logger } from '../../utils/logger';
 
+// Try to import the correct Brevo SDK structure
+let ApiClient: any;
+let TransactionalEmailsApi: any;
+let SendSmtpEmail: any;
+
+try {
+  // Try the new @getbrevo/brevo package structure
+  if ((brevo as any).ApiClient) {
+    ApiClient = (brevo as any).ApiClient;
+    TransactionalEmailsApi = (brevo as any).TransactionalEmailsApi;
+    SendSmtpEmail = (brevo as any).SendSmtpEmail;
+  } else if ((brevo as any).default) {
+    // Try default export
+    const brevoDefault = (brevo as any).default;
+    ApiClient = brevoDefault.ApiClient;
+    TransactionalEmailsApi = brevoDefault.TransactionalEmailsApi;
+    SendSmtpEmail = brevoDefault.SendSmtpEmail;
+  }
+} catch (e) {
+  console.error('📧 [BREVO] Failed to import Brevo SDK:', e);
+}
+
 export interface EmailOptions {
   to: string;
   subject: string;
@@ -73,30 +95,70 @@ export class EmailService {
     }
 
     try {
-      // Initialize Brevo API client
-      const defaultClient = (brevo as any).ApiClient?.instance;
-      if (defaultClient) {
-        this.apiClient = defaultClient;
-        const apiKeyAuth = defaultClient.authentications['api-key'];
-        if (apiKeyAuth) {
-          apiKeyAuth.apiKey = brevoApiKey;
-          console.log('📧 [BREVO] API key configured in client');
+      // Initialize Brevo API client - try multiple methods
+      let defaultClient: any = null;
+      
+      // Method 1: Try ApiClient.instance (standard method)
+      if (ApiClient && ApiClient.instance) {
+        defaultClient = ApiClient.instance;
+        console.log('📧 [BREVO] Using ApiClient.instance method');
+      } 
+      // Method 2: Try creating new ApiClient
+      else if (ApiClient) {
+        defaultClient = new ApiClient();
+        console.log('📧 [BREVO] Using new ApiClient() method');
+      }
+      // Method 3: Try direct access from brevo object
+      else if ((brevo as any).ApiClient) {
+        const BrevoApiClient = (brevo as any).ApiClient;
+        if (BrevoApiClient.instance) {
+          defaultClient = BrevoApiClient.instance;
+          console.log('📧 [BREVO] Using brevo.ApiClient.instance method');
         } else {
-          console.error('📧 [BREVO] ⚠️  api-key authentication not found in client');
+          defaultClient = new BrevoApiClient();
+          console.log('📧 [BREVO] Using new brevo.ApiClient() method');
         }
+      }
+
+      if (!defaultClient) {
+        throw new Error('Could not initialize Brevo ApiClient - package structure may have changed');
+      }
+
+      // Set API key
+      this.apiClient = defaultClient;
+      const apiKeyAuth = defaultClient.authentications?.['api-key'];
+      
+      if (apiKeyAuth) {
+        apiKeyAuth.apiKey = brevoApiKey;
+        const apiKeyPreview = brevoApiKey.substring(0, 10) + '...';
+        console.log(`📧 [BREVO] ✅ API key configured: ${apiKeyPreview}`);
       } else {
-        console.error('📧 [BREVO] ⚠️  ApiClient.instance not found');
+        // Alternative: Set API key directly on client
+        if (defaultClient.setApiKey) {
+          defaultClient.setApiKey(brevoApiKey);
+          console.log('📧 [BREVO] ✅ API key set via setApiKey method');
+        } else {
+          throw new Error('Could not set API key - authentications["api-key"] not found');
+        }
       }
 
       // Initialize Transactional Emails API
-      this.transactionalEmailsApi = new (brevo as any).TransactionalEmailsApi();
-      
-      // Verify API key is set
-      if (this.apiClient && this.apiClient.authentications['api-key']?.apiKey) {
-        const apiKeyPreview = this.apiClient.authentications['api-key'].apiKey.substring(0, 10) + '...';
-        console.log(`📧 [BREVO] API key preview: ${apiKeyPreview}`);
+      if (TransactionalEmailsApi) {
+        this.transactionalEmailsApi = new TransactionalEmailsApi();
+      } else if ((brevo as any).TransactionalEmailsApi) {
+        this.transactionalEmailsApi = new (brevo as any).TransactionalEmailsApi();
       } else {
-        console.error('📧 [BREVO] ⚠️  API key not properly set in client');
+        throw new Error('TransactionalEmailsApi not found in Brevo package');
+      }
+
+      // Verify API key is set
+      const finalApiKey = defaultClient.authentications?.['api-key']?.apiKey || 
+                         defaultClient.apiKey ||
+                         brevoApiKey;
+      
+      if (finalApiKey) {
+        const apiKeyPreview = finalApiKey.substring(0, 10) + '...';
+        console.log(`📧 [BREVO] ✅ Verified API key: ${apiKeyPreview}`);
       }
 
       this.isInitialized = true;
@@ -106,6 +168,7 @@ export class EmailService {
       logger.info(`From email: ${fromEmail} (${fromName})`);
     } catch (error: any) {
       console.error('📧 [BREVO] ❌ Failed to initialize API client:', error.message);
+      console.error('📧 [BREVO] Error stack:', error.stack);
       logger.error('❌ Failed to initialize Brevo API client:', error);
       logger.error('Error details:', {
         message: error.message,
@@ -184,7 +247,15 @@ export class EmailService {
 
     try {
       // Create email object for Brevo API
-      const sendSmtpEmail = new (brevo as any).SendSmtpEmail();
+      let sendSmtpEmail: any;
+      if (SendSmtpEmail) {
+        sendSmtpEmail = new SendSmtpEmail();
+      } else if ((brevo as any).SendSmtpEmail) {
+        sendSmtpEmail = new (brevo as any).SendSmtpEmail();
+      } else {
+        // Fallback: create plain object
+        sendSmtpEmail = {};
+      }
       sendSmtpEmail.subject = options.subject;
       sendSmtpEmail.htmlContent = options.html;
       sendSmtpEmail.textContent = options.text || options.html.replace(/<[^>]*>/g, ''); // Strip HTML for text version
