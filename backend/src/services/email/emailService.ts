@@ -205,18 +205,30 @@ export class EmailService {
         text: options.text || options.html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
       };
 
+      console.log(`📧 [EMAIL] Sending email to ${options.to} from ${fromEmail}`);
+      console.log(`📧 [EMAIL] Subject: ${options.subject}`);
       logger.info(`📤 [EMAIL] Sending email to ${options.to} from ${fromEmail}`);
-      const info = await this.transporter.sendMail(mailOptions);
+      
+      // Add timeout to email sending (30 seconds)
+      const sendPromise = this.transporter.sendMail(mailOptions);
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Email send timeout after 30 seconds')), 30000);
+      });
+      
+      const info = await Promise.race([sendPromise, timeoutPromise]) as any;
+      console.log(`✅ [EMAIL] Email sent successfully to ${options.to}: ${info.messageId}`);
       logger.info(`✅ [EMAIL] Email sent successfully to ${options.to}: ${info.messageId}`);
     } catch (error: any) {
+      console.error(`❌ [EMAIL] Failed to send email to ${options.to}:`, error?.message || error);
+      console.error(`❌ [EMAIL] Error code: ${error?.code || 'unknown'}`);
       logger.error(`❌ Failed to send email to ${options.to}:`, error);
       logger.error('Email error details:', {
-        message: error.message,
-        code: error.code,
-        command: error.command,
-        response: error.response,
-        responseCode: error.responseCode,
-        stack: error.stack,
+        message: error?.message || error,
+        code: error?.code,
+        command: error?.command,
+        response: error?.response,
+        responseCode: error?.responseCode,
+        stack: error?.stack,
       });
       
       // Provide more helpful error messages for common Gmail errors
