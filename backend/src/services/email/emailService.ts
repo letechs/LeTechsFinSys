@@ -136,6 +136,8 @@ export class EmailService {
    * Send email
    */
   async sendEmail(options: EmailOptions): Promise<void> {
+    logger.info(`📧 [EMAIL] Attempting to send email to: ${options.to}, Subject: ${options.subject}`);
+    
     // Brevo: FROM email must be explicitly set and verified in Brevo account
     // Never fallback to SMTP_EMAIL (login email) as FROM address
     const fromEmail = process.env.SMTP_FROM_EMAIL;
@@ -152,6 +154,13 @@ export class EmailService {
       logger.error(`❌ ${errorMsg}`);
       logger.error('This usually means SMTP configuration failed during startup.');
       logger.error('Check Railway logs for SMTP initialization errors.');
+      logger.error('SMTP Config Check:', {
+        SMTP_HOST: process.env.SMTP_HOST || 'MISSING',
+        SMTP_PORT: process.env.SMTP_PORT || 'MISSING',
+        SMTP_EMAIL: process.env.SMTP_EMAIL || 'MISSING',
+        SMTP_PASSWORD: process.env.SMTP_PASSWORD ? 'SET' : 'MISSING',
+        SMTP_FROM_EMAIL: fromEmail || 'MISSING',
+      });
       
       // In production, throw error so it's caught and logged properly
       if (config.nodeEnv === 'production') {
@@ -174,9 +183,9 @@ export class EmailService {
         text: options.text || options.html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
       };
 
-      logger.debug(`Attempting to send email to ${options.to} from ${fromEmail}`);
+      logger.info(`📤 [EMAIL] Sending email to ${options.to} from ${fromEmail}`);
       const info = await this.transporter.sendMail(mailOptions);
-      logger.info(`✅ Email sent successfully to ${options.to}: ${info.messageId}`);
+      logger.info(`✅ [EMAIL] Email sent successfully to ${options.to}: ${info.messageId}`);
     } catch (error: any) {
       logger.error(`❌ Failed to send email to ${options.to}:`, error);
       logger.error('Email error details:', {

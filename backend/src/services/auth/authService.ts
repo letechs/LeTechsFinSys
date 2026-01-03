@@ -30,7 +30,11 @@ export class AuthService {
     try {
       // Check if MongoDB is connected
       const mongoose = require('mongoose');
-      if (mongoose.connection.readyState !== 1) {
+      const connectionState = mongoose.connection.readyState;
+      logger.info(`MongoDB connection state during registration: ${connectionState} (0=disconnected, 1=connected, 2=connecting, 3=disconnecting)`);
+      
+      if (connectionState !== 1) {
+        logger.error(`Registration failed: MongoDB not connected. State: ${connectionState}`);
         throw new Error('Database connection is not available. Please ensure MongoDB is running.');
       }
 
@@ -59,17 +63,23 @@ export class AuthService {
       });
 
       await user.save();
+      logger.info(`✅ User saved to database: ${user.email} (ID: ${user._id})`);
 
       // Send verification email (don't block registration if email fails)
+      logger.info(`📧 Attempting to send verification email to: ${user.email}`);
       emailVerificationService.sendVerificationEmail(user._id.toString(), user.email).catch((error) => {
-        logger.error(`Failed to send verification email to ${user.email}:`, error);
+        logger.error(`❌ Failed to send verification email to ${user.email}:`, error);
+        logger.error('Email error details:', {
+          message: error?.message,
+          stack: error?.stack,
+        });
         // Don't throw - user is already registered
       });
 
       // Generate JWT token
       const token = this.generateToken(user);
 
-      logger.info(`New user registered: ${user.email}`);
+      logger.info(`✅ New user registered successfully: ${user.email}`);
 
       return {
         user,

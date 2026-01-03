@@ -40,10 +40,16 @@ export class EmailVerificationService {
 
     // Send email
     try {
+      logger.info(`📧 Calling emailService.sendVerificationEmail for: ${email}`);
       await emailService.sendVerificationEmail(email, token, verificationUrl);
-      logger.info(`Verification email sent to: ${email}`);
+      logger.info(`✅ Verification email sent successfully to: ${email}`);
     } catch (error: any) {
-      logger.error(`Failed to send verification email to ${email}:`, error);
+      logger.error(`❌ Failed to send verification email to ${email}:`, error);
+      logger.error('Email verification error details:', {
+        message: error?.message,
+        code: error?.code,
+        stack: error?.stack,
+      });
       // Don't throw - token is still valid, user can request resend
     }
   }
