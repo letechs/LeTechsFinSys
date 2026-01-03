@@ -1,9 +1,6 @@
-import * as SibApiV3Sdk from '@sendinblue/client';
+const SibApiV3Sdk = require('@sendinblue/client');
 import { config } from '../../config/env';
 import { logger } from '../../utils/logger';
-
-// Type-safe access to Brevo SDK
-const BrevoSDK = SibApiV3Sdk as any;
 
 export interface EmailOptions {
   to: string;
@@ -76,14 +73,22 @@ export class EmailService {
 
     try {
       // Initialize Brevo API client using SibApiV3Sdk
-      const defaultClient = BrevoSDK.ApiClient.instance;
+      // The package exports ApiClient directly
+      const defaultClient = SibApiV3Sdk.ApiClient.instance;
+      
+      if (!defaultClient) {
+        throw new Error('ApiClient.instance is undefined - package may not be loaded correctly');
+      }
       
       // Configure API key authentication
       const apiKey = defaultClient.authentications['api-key'];
+      if (!apiKey) {
+        throw new Error('api-key authentication not found in ApiClient');
+      }
       apiKey.apiKey = brevoApiKey;
 
       // Initialize Transactional Emails API
-      this.apiInstance = new BrevoSDK.TransactionalEmailsApi();
+      this.apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 
       // Verify API key is set
       const apiKeyPreview = brevoApiKey.substring(0, 10) + '...';
@@ -118,7 +123,7 @@ export class EmailService {
     // Brevo API doesn't have a direct "verify" endpoint
     // We'll test by checking if API client is configured
     try {
-      const defaultClient = BrevoSDK.ApiClient.instance;
+      const defaultClient = SibApiV3Sdk.ApiClient.instance;
       if (defaultClient && defaultClient.authentications['api-key']?.apiKey) {
         logger.info('✅ Brevo API client is configured');
         return true;
@@ -176,7 +181,7 @@ export class EmailService {
 
     try {
       // Create email object for Brevo API
-      const sendSmtpEmail = new BrevoSDK.SendSmtpEmail();
+      const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
       sendSmtpEmail.subject = options.subject;
       sendSmtpEmail.htmlContent = options.html;
       sendSmtpEmail.textContent = options.text || options.html.replace(/<[^>]*>/g, ''); // Strip HTML for text version
