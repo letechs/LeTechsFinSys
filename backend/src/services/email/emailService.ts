@@ -69,16 +69,17 @@ export class EmailService {
     
     console.log('📧 [SMTP] All SMTP variables present, creating transporter...');
 
-    // For Brevo on Railway: Always use STARTTLS (secure: false)
-    // Railway often blocks port 587, so use port 2525 as alternative
-    // Brevo supports both 587 and 2525 with STARTTLS
-    const smtpSecure = false;
+    // For Brevo on Railway: 
+    // - Port 465: Use SSL/TLS (secure: true)
+    // - Port 587 or 2525: Use STARTTLS (secure: false)
+    // Railway often blocks ports 587 and 2525, so port 465 with SSL is recommended
+    const smtpSecure = smtpPort === 465;
 
     try {
       this.transporter = nodemailer.createTransport({
         host: smtpHost,
         port: smtpPort,
-        secure: smtpSecure, // Always false for Brevo (STARTTLS) - required for Railway
+        secure: smtpSecure, // true for port 465 (SSL), false for 587/2525 (STARTTLS)
         auth: {
           user: smtpUser,
           pass: smtpPass,
