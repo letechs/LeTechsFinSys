@@ -80,11 +80,24 @@ export class EmailService {
         const apiKeyAuth = defaultClient.authentications['api-key'];
         if (apiKeyAuth) {
           apiKeyAuth.apiKey = brevoApiKey;
+          console.log('📧 [BREVO] API key configured in client');
+        } else {
+          console.error('📧 [BREVO] ⚠️  api-key authentication not found in client');
         }
+      } else {
+        console.error('📧 [BREVO] ⚠️  ApiClient.instance not found');
       }
 
       // Initialize Transactional Emails API
       this.transactionalEmailsApi = new (brevo as any).TransactionalEmailsApi();
+      
+      // Verify API key is set
+      if (this.apiClient && this.apiClient.authentications['api-key']?.apiKey) {
+        const apiKeyPreview = this.apiClient.authentications['api-key'].apiKey.substring(0, 10) + '...';
+        console.log(`📧 [BREVO] API key preview: ${apiKeyPreview}`);
+      } else {
+        console.error('📧 [BREVO] ⚠️  API key not properly set in client');
+      }
 
       this.isInitialized = true;
       console.log('📧 [BREVO] ✅ Brevo API client initialized successfully');
@@ -202,22 +215,52 @@ export class EmailService {
     } catch (error: any) {
       console.error(`❌ [EMAIL] Failed to send email to ${options.to}:`, error?.message || error);
       console.error(`❌ [EMAIL] Error code: ${error?.code || 'unknown'}`);
+      
+      // Log full error details for debugging
+      console.error(`❌ [EMAIL] Full error:`, JSON.stringify(error, null, 2));
       logger.error(`❌ Failed to send email to ${options.to}:`, error);
       
       // Extract detailed error information
       let errorMessage = error?.message || 'Unknown error';
-      let errorCode = error?.code || 'unknown';
+      let errorCode = error?.code || error?.statusCode || error?.response?.status || 'unknown';
+      let errorDetails: any = {};
       
       // Brevo API specific error handling
-      if (error?.response?.body) {
-        const errorBody = error.response.body;
-        errorMessage = errorBody.message || errorMessage;
-        errorCode = errorBody.code || errorCode;
+      if (error?.response) {
+        // Axios-style error response
+        errorCode = error.response.status || errorCode;
+        if (error.response.data) {
+          errorDetails = error.response.data;
+          errorMessage = error.response.data.message || error.response.data.error || errorMessage;
+          
+          console.error(`❌ [EMAIL] Brevo API response status: ${error.response.status}`);
+          console.error(`❌ [EMAIL] Brevo API response body:`, JSON.stringify(error.response.data, null, 2));
+          
+          logger.error('Brevo API error details:', {
+            status: error.response.status,
+            statusText: error.response.statusText,
+            message: error.response.data.message || error.response.data.error,
+            code: error.response.data.code,
+            id: error.response.data.id,
+            fullResponse: error.response.data,
+          });
+        } else {
+          logger.error('Brevo API error (no response body):', {
+            status: error.response.status,
+            statusText: error.response.statusText,
+            headers: error.response.headers,
+          });
+        }
+      } else if (error?.body) {
+        // Direct body property
+        errorDetails = error.body;
+        errorMessage = error.body.message || errorMessage;
+        errorCode = error.body.code || errorCode;
         
-        logger.error('Brevo API error details:', {
-          message: errorBody.message,
-          code: errorBody.code,
-          id: errorBody.id,
+        logger.error('Brevo API error details (body):', {
+          message: error.body.message,
+          code: error.body.code,
+          id: error.body.id,
         });
       } else {
         logger.error('Email error details:', {
@@ -228,11 +271,14 @@ export class EmailService {
       }
 
       // Provide helpful error messages
-      if (errorCode === 401 || errorMessage?.includes('Invalid API key')) {
-        errorMessage = 'Brevo API authentication failed. Please check your BREVO_API_KEY.';
+      if (errorCode === 401 || errorCode === '401' || errorMessage?.toLowerCase().includes('unauthorized') || errorMessage?.toLowerCase().includes('invalid api key')) {
+        errorMessage = 'Brevo API authentication failed (401 Unauthorized). Please verify your BREVO_API_KEY is correct and has proper permissions.';
+        console.error(`❌ [EMAIL] API Key check: ${process.env.BREVO_API_KEY ? 'SET (but may be invalid)' : 'MISSING'}`);
+      } else if (errorCode === 400 || errorCode === '400') {
+        errorMessage = `Brevo API bad request (400). ${errorDetails.message || 'Check email format and sender verification.'}`;
       } else if (errorMessage?.includes('timeout')) {
         errorMessage = 'Email send timeout - Brevo API did not respond in time.';
-      } else if (errorMessage?.includes('sender')) {
+      } else if (errorMessage?.toLowerCase().includes('sender') || errorMessage?.toLowerCase().includes('from')) {
         errorMessage = `Sender email (${fromEmail}) must be verified in Brevo dashboard.`;
       }
       
