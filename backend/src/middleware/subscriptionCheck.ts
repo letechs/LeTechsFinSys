@@ -17,15 +17,16 @@ export const checkSubscription = (options: SubscriptionCheckOptions = {}) => {
         throw new ForbiddenError('Authentication required');
       }
 
-      // Get active subscription (will auto-create in development if none exists)
+      // Get hybrid subscription (checks User model fields - baseTier, subscriptionTier, trial, etc.)
+      // This is the same method used by accountService.createAccount() for consistency
       // Add timeout to prevent hanging
-      const subscription = await Promise.race([
-        subscriptionService.getCurrentSubscription(req.user._id.toString()),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)) // 5 second timeout
+      const hybridSubscription = await Promise.race([
+        subscriptionService.getHybridSubscription(req.user._id.toString()),
+        new Promise<any>((resolve) => setTimeout(() => resolve(null), 5000)) // 5 second timeout
       ]);
 
       // In development, allow users without subscription (with default limits)
-      if (!subscription) {
+      if (!hybridSubscription) {
         if (config.nodeEnv === 'development') {
           // In development, create a mock subscription object with default limits
           (req as any).subscription = {
@@ -54,11 +55,25 @@ export const checkSubscription = (options: SubscriptionCheckOptions = {}) => {
         throw new ForbiddenError('No active subscription found');
       }
 
-      // Check feature access
+      // Check if user has active subscription
+      // User has active subscription if:
+      // 1. subscriptionTier is not BASIC, OR
+      // 2. subscriptionTier is BASIC but has active trial
+      const hasActiveTrial = hybridSubscription.trialClaimed && 
+                            hybridSubscription.trialExpiryDate && 
+                            new Date(hybridSubscription.trialExpiryDate) > new Date();
+      const hasActiveSubscription = hybridSubscription.subscriptionTier !== 'BASIC' || hasActiveTrial;
+
+      if (!hasActiveSubscription) {
+        throw new ForbiddenError('No active subscription found');
+      }
+
+      // Check feature access (if needed)
+      // Note: getHybridSubscription doesn't return features, so we check based on tier
       if (options.requireFeature) {
-        const feature = options.requireFeature as keyof typeof subscription.features;
-        
-        if (!subscription.features[feature]) {
+        // For now, EA_LICENSE and FULL_ACCESS tiers have all features
+        // BASIC tier without trial has no features
+        if (hybridSubscription.subscriptionTier === 'BASIC' && !hasActiveTrial) {
           throw new ForbiddenError(`Feature '${options.requireFeature}' is not available in your plan`);
         }
       }
@@ -70,15 +85,30 @@ export const checkSubscription = (options: SubscriptionCheckOptions = {}) => {
           status: { $in: ['active', 'offline'] },
         });
 
-        if (accountCount >= subscription.maxAccounts) {
+        // Total account limit = totalMasters + totalSlaves
+        const totalLimit = hybridSubscription.limits.totalMasters + hybridSubscription.limits.totalSlaves;
+
+        if (accountCount >= totalLimit) {
           throw new ForbiddenError(
-            `Account limit reached. Maximum ${subscription.maxAccounts} accounts allowed.`
+            `Account limit reached. You have ${totalLimit} total account license(s). ` +
+            `Please purchase additional add-ons or upgrade your subscription to add more accounts.`
           );
         }
       }
 
       // Attach subscription to request (optional, for use in controllers)
-      (req as any).subscription = subscription;
+      // Convert hybrid subscription format to match expected format for backward compatibility
+      (req as any).subscription = {
+        maxAccounts: hybridSubscription.limits.totalMasters + hybridSubscription.limits.totalSlaves,
+        features: {
+          copyTrading: hasActiveSubscription,
+          remoteControl: hasActiveSubscription,
+          templates: hybridSubscription.subscriptionTier === 'FULL_ACCESS',
+          rulesEngine: hybridSubscription.subscriptionTier === 'FULL_ACCESS',
+          multiMaster: hybridSubscription.subscriptionTier === 'FULL_ACCESS',
+          apiAccess: false, // API access not available yet
+        },
+      };
 
       next();
     } catch (error) {
