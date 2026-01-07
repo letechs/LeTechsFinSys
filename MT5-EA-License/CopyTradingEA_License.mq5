@@ -17,24 +17,25 @@
 #define SYMBOL_CACHE_FILE   (EA_NAME_PREFIX + "_symbol_cache.bin")
 
 #include <Trade\Trade.mqh>
+#include <Trade\PositionInfo.mqh>
+#include <Trade\SymbolInfo.mqh>
 #include "LicenseValidator.mqh"
 
 // -------------------------------------------------------------
 //  MODE (MASTER / SLAVE)
 // -------------------------------------------------------------
 enum ENUM_MODE { MODE_MASTER, MODE_SLAVE };
-// Mode is determined automatically from backend config
-// This input is only used as FALLBACK if backend config is unavailable
-input ENUM_MODE Mode = MODE_SLAVE;  // Fallback mode (used only if backend config fails)
+// Mode is determined automatically from backend config (REQUIRED)
 
 CTrade trade;
+CPositionInfo position;
+CSymbolInfo symbolInfo;
 
 // -----------------------------------------------------------------
 // ---------------------  LICENSE VALIDATION SETTINGS  --------------
 // -----------------------------------------------------------------
-// Backend API URL for license validation
-input string LicenseApiUrl = "http://127.0.0.1:5000";  // Backend API base URL
-// User ID from your account (get from dashboard)
+input group "=== License & Backend Configuration ==="
+input string LicenseApiUrl = "https://letechsfinsys-production.up.railway.app";  // Backend API base URL
 input string UserId = "";  // Your user ID from the platform
 
 // Internal license validation settings (not user-configurable)
@@ -65,20 +66,29 @@ const string RISK_DISCLAIMER =
 // -----------------------------------------------------------------
 // ---------------------  CLIENT-VISIBLE TOGGLES  -------------------
 // -----------------------------------------------------------------
-input bool ShowSignatureOnChart = true;
-input bool ShowAboutInExperts   = true;
+// -----------------------------------------------------------------
+// ---------------------  DISPLAY SETTINGS (Static - not in inputs)  -------------
+// -----------------------------------------------------------------
+static bool ShowSignatureOnChart = true;  // Show EA brand info on chart
+static bool ShowAboutInExperts   = true;  // Show about info in Experts tab
+static bool ShowProfitDisplay = true;  // Show profit by symbol on chart
+static int UpdateIntervalSeconds = 5;  // Position display update interval (seconds)
+static color TextColor = clrWhite;  // Display text color
+static int FontSize = 9;  // Display font size
+static string FontName = "Arial";  // Display font name
 
 // -----------------------------------------------------------------
 // ---------------------  CORE COPY SETTINGS  -----------------------
 // -----------------------------------------------------------------
-// Master login is determined automatically from backend config
-// This input is only used as FALLBACK if backend config is unavailable
-input int clogin_master = 0;  // Fallback master login (used only if backend config fails)
+input group "=== Core Copy Trading Settings ==="
+static int clogin_master = 0;  // Fallback master login (used only if backend config fails)
+input bool MirrorOnClose  = true;         // Close local trade when master closes
+input bool ReverseTrades  = false;        // Invert trade direction on slave
+input bool OpenHistoricalOnStart   = true;   // Open existing master trades at startup
+input bool CopySLTP = true;   // Copy SL/TP from master
+
 int g_masterLogin = 0;  // Actual master login used (from backend config or fallback)
 int g_fallbackMasterLogin = 0;  // Fallback if backend unavailable (will use current account for master)
-input bool MirrorOnClose  = true;         // true = close local trade when master closes
-input bool ReverseTrades  = false;        // true = invert trade direction on slave
-input bool OpenHistoricalOnStart   = true;   // false = ignore/open nothing for existing master trades at startup
 static bool UseMasterEquityFromProvider = true;
 
 static int  BlacklistExpiryMinutes  = 0;
@@ -88,7 +98,6 @@ static int  MaxInflightGuardSeconds = 30;
 
 #define PROVIDER_PREFIX "prov:"
 #define END_MARKER      0x7F7F7F7F
-input bool CopySLTP = true;   // true = copy SL/TP, false = ignore completely
 
 // -----------------------------------------------------------------
 // -----------------------  LOT SIZING OPTIONS  ---------------------
@@ -102,12 +111,46 @@ enum LOT_MODE
    MULT_ON_MASTER_LOT = 4
 };
 
-input LOT_MODE LotMode = SAME_AS_MASTER;
-input double   FixedLot            = 0.01;
+input group "=== Lot Sizing Options ==="
+input LOT_MODE LotMode = SAME_AS_MASTER;  // Lot sizing mode
+input double   FixedLot            = 0.01;  // Fixed lot size (if FIXED_LOT mode)
+input double   EquityMultiplier    = 1.0;  // Equity multiplier (if MULT_ON_EQUITY mode)
+input double   MasterLotMultiplier = 1.0;  // Master lot multiplier (if MULT_ON_MASTER_LOT mode)
+input bool     UseMinIfBelow       = true;  // Use minimum lot if calculated lot is below minimum
+
 static double  EquityReference     = 1000.0;
-input double   EquityMultiplier    = 1.0;
-input double   MasterLotMultiplier = 1.0;
-input bool     UseMinIfBelow       = true;
+
+// -----------------------------------------------------------------
+// ---------------------  POSITION MANAGEMENT SETTINGS  -------------
+// -----------------------------------------------------------------
+// Enum for SL/TP mode
+enum ENUM_SLTP_MODE
+{
+   MODE_POINTS,      // Set SL/TP by points
+   MODE_AMOUNT       // Set SL/TP by amount (account currency)
+};
+
+input group "=== Auto-Close Settings (Global) ==="
+input bool EnableAutoClose = false;  // Enable auto-close by profit
+
+input group "=== Auto-Close Settings (Symbol-level) ==="
+input bool AutoCloseBySymbol = false;  // Close all positions of symbol when threshold reached
+input double AutoCloseProfitAmount = 0.0;  // Auto-close profit threshold (account currency)
+
+input group "=== Auto-Close Settings (Account-level) ==="
+input bool EnableAccountProfitClose = false;  // Enable account profit threshold auto-close
+input double AccountProfitThreshold = 0.0;  // Close all positions when account profit reaches this (account currency)
+input bool EnableAccountLossClose = false;  // Enable account loss threshold auto-close (Emergency Stop Loss)
+input double AccountLossThreshold = 0.0;  // Close all positions when account loss reaches this amount (enter positive number, e.g., 200.0 means -200.0 loss)
+
+input group "=== SL/TP Management Settings ==="
+input bool EnableSLManagement = false;  // Enable Stop Loss management
+input bool EnableTPManagement = false;  // Enable Take Profit management
+input ENUM_SLTP_MODE SLTPMode = MODE_POINTS;  // SL/TP calculation mode
+input double StopLossPoints = 0.0;  // Stop Loss (points)
+input double TakeProfitPoints = 0.0;  // Take Profit (points)
+input double StopLossAmount = 0.0;  // Stop Loss (account currency) - used if MODE_AMOUNT
+input double TakeProfitAmount = 0.0;  // Take Profit (account currency) - used if MODE_AMOUNT
 
 // ---------- mapping arrays (parallel) ----------
 ulong map_providerTicket[];
@@ -133,6 +176,11 @@ string cache_local[];
 
 string alias_master[];
 string alias_list[];
+
+// ---------- position management globals ----------
+datetime g_lastPositionUpdate = 0;
+string g_objectPrefix = "PosMgr_";
+string g_accountCurrency = "";
 
 // ---------- utility ----------
 string ProviderComment(ulong providerTicket)
@@ -332,7 +380,6 @@ void BlacklistAdd(ulong providerTicket)
    blacklist_providerTicket[n] = providerTicket;
    blacklist_time[n] = (int)TimeCurrent();
    PersistBlacklist();
-   PrintFormat("BlacklistAdd: provider %I64u added at %d", providerTicket, TimeCurrent());
 }
 
 void BlacklistRemove(ulong providerTicket)
@@ -414,7 +461,6 @@ void LoadMappings()
       map_lastSeenTime[i]= 0;
    }
    int em = FileReadInteger(f);
-   if(em != END_MARKER) Print("LoadMappings: end marker missing");
    FileClose(f);
 }
 
@@ -435,7 +481,6 @@ void LoadBlacklist()
       blacklist_time[i] = FileReadInteger(f);
    }
    int em = FileReadInteger(f);
-   if(em != END_MARKER) Print("LoadBlacklist: end marker missing");
    FileClose(f);
 }
 
@@ -680,8 +725,7 @@ void LoadSymbolMapFile()
    ArrayResize(user_map_local,0);
    ArrayResize(user_map_server,0);
    int f = FileOpen(SYMBOL_MAP_FILE, FILE_READ|FILE_TXT|FILE_COMMON);
-   if(f == INVALID_HANDLE) { PrintFormat("SymbolMap: no %s file found (that's OK)", SYMBOL_MAP_FILE); return; }
-   PrintFormat("SymbolMap: loading %s", SYMBOL_MAP_FILE);
+   if(f == INVALID_HANDLE) { return; }
    while(!FileIsEnding(f))
    {
       string line = FileReadString(f);
@@ -743,7 +787,6 @@ void LoadSymbolCache()
       cache_local[i]  = FileReadString(f, l2);
    }
    int em = FileReadInteger(f);
-   if(em != END_MARKER) Print("LoadSymbolCache: end marker missing");
    FileClose(f);
 }
 
@@ -831,7 +874,6 @@ bool ReadProviderSnapshotStrict(
       ArrayResize(outSL,0);
       ArrayResize(outTP,0);
       ArrayResize(outOpenPrice,0);
-      Print("ReadProviderSnapshotStrict: END_MARKER missing, skipping cycle");
       return false;
    }
    return true;
@@ -847,7 +889,6 @@ void HandleStartupHistoricalBlacklist()
    if(!ok) return;
    int pc = ArraySize(provTickets);
    if(pc==0) return;
-   Print("Startup: OpenHistoricalOnStart=FALSE -> blacklisting current provider tickets to avoid historical opens");
    for(int i=0;i<pc;i++) BlacklistAdd(provTickets[i]);
 }
 
@@ -985,11 +1026,9 @@ void SyncSLTPForMappedPosition(const ulong providerTicket, const ulong localPosT
    ulong realPosTicket = pos.Ticket();
    if(ModifyPositionSLTPByTicket(realPosTicket, localSym, newSL, newTP))
    {
-      PrintFormat("SLTP SYNC OK | provider=%I64u local=%I64u %s SL=%.5f TP=%.5f", providerTicket, realPosTicket, localSym, newSL, newTP);
    }
    else
    {
-      PrintFormat("SLTP SYNC FAIL | provider=%I64u local=%I64u %s", providerTicket, realPosTicket, localSym);
    }
 }
 
@@ -999,17 +1038,7 @@ void SlaveSyncCycle()
    static bool firstCall = true;
    cycleCount++;
    
-   if(firstCall || cycleCount % 500 == 0)  // Reduced from 100 to 500 cycles
-   {
-      Print("==========================================");
-      PrintFormat("SlaveSyncCycle: [DEBUG] Called - Cycle #%d", cycleCount);
-      PrintFormat("SlaveSyncCycle: [DEBUG] g_determinedMode=%s", EnumToString(g_determinedMode));
-      PrintFormat("SlaveSyncCycle: [DEBUG] g_masterLogin=%d", g_masterLogin);
-      PrintFormat("SlaveSyncCycle: [DEBUG] clogin_master=%d", clogin_master);
-      PrintFormat("SlaveSyncCycle: [DEBUG] Current Login=%d", AccountInfoInteger(ACCOUNT_LOGIN));
-      Print("==========================================");
-      firstCall = false;
-   }
+   firstCall = false;
    
    // Check license before operations
    if(g_licenseValidator != NULL)
@@ -1025,11 +1054,6 @@ void SlaveSyncCycle()
    // This ensures snapshot file name consistency and prevents reading wrong file
    int masterLoginToUse = g_masterLogin;
    
-   if(cycleCount <= 3)
-   {
-      PrintFormat("SlaveSyncCycle: [DEBUG] masterLoginToUse=%d (g_masterLogin=%d)", 
-                  masterLoginToUse, g_masterLogin);
-   }
    
    if(masterLoginToUse <= 0)
    {
@@ -1071,38 +1095,11 @@ void SlaveSyncCycle()
    bool ok = ReadProviderSnapshotStrict(snapshot, provTickets, provSymbols, provVolumes, provTypes, provSL, provTP, masterEquity, provOpenPrice);
    if(!ok)
    {
-      // DEBUG: Log when snapshot read fails (throttled to once per minute)
-      static datetime lastErrorLog = 0;
-      if(TimeCurrent() - lastErrorLog > 60) // Log once per minute to avoid spam
-      {
-         Print("==========================================");
-         PrintFormat("SlaveSyncCycle: [DEBUG] Failed to read snapshot from master login %d", masterLoginToUse);
-         PrintFormat("SlaveSyncCycle: [DEBUG] Snapshot file: %s", snapshot);
-         Print("SlaveSyncCycle: [DEBUG] Make sure master EA is running and writing snapshots");
-         Print("SlaveSyncCycle: [DEBUG] Check if file exists in MT5 Files/Common folder");
-         Print("==========================================");
-         lastErrorLog = TimeCurrent();
-      }
+      // Snapshot read failed - skip this cycle
       return; // skip this cycle if snapshot is incomplete
    }
    
-   // DEBUG: Log when snapshot is successfully read (only when position count changes)
-   static int lastProvCount = -1;
    int provCount = ArraySize(provTickets);
-   if(provCount != lastProvCount)  // Only log when count changes, not every 100 cycles
-   {
-      Print("==========================================");
-      PrintFormat("SlaveSyncCycle: [DEBUG] Snapshot read successfully");
-      PrintFormat("SlaveSyncCycle: [DEBUG] Master positions: %d", provCount);
-      PrintFormat("SlaveSyncCycle: [DEBUG] Master login: %d", masterLoginToUse);
-      if(provCount > 0)
-      {
-         PrintFormat("SlaveSyncCycle: [DEBUG] First position: ticket=%I64u, symbol=%s, volume=%.2f", 
-                     provTickets[0], provSymbols[0], provVolumes[0]);
-      }
-      Print("==========================================");
-      lastProvCount = provCount;
-   }
 
    int now = (int)TimeCurrent();
    
@@ -1235,7 +1232,6 @@ void SlaveSyncCycle()
          datetime now = TimeCurrent();
          if(now - lastSymbolErrorLog >= 60)
          {
-            PrintFormat("SlaveSyncCycle: [DEBUG] Failed to map master symbol '%s' to local symbol", masterSym);
             lastSymbolErrorLog = now;
          }
          map_openState[midx] = 0;
@@ -1250,7 +1246,6 @@ void SlaveSyncCycle()
          datetime now = TimeCurrent();
          if(now - lastLotErrorLog >= 60)
          {
-            PrintFormat("SlaveSyncCycle: [DEBUG] Calculated lot size is 0 for position %I64u, skipping", pt);
             lastLotErrorLog = now;
          }
          map_openState[midx] = 0;
@@ -1318,14 +1313,7 @@ void MasterWriteSnapshot()
    string final_snapshot = SnapshotFileNameForLogin(login_id);
    string temp_snapshot  = final_snapshot + ".tmp";
    
-   // DEBUG: Log snapshot writing (when position count changes)
-   static int lastPosCount = -1;
    int currentPosCount = PositionsTotal();
-   if(currentPosCount != lastPosCount)
-   {
-      PrintFormat("MasterWriteSnapshot: Writing snapshot for login %d, positions: %d", login_id, currentPosCount);
-      lastPosCount = currentPosCount;
-   }
 
    int f = FileOpen(temp_snapshot, FILE_WRITE|FILE_BIN|FILE_COMMON);
    if(f == INVALID_HANDLE) { Print("MasterWriteSnapshot: FileOpen failed ", GetLastError()); return; }
@@ -1378,9 +1366,11 @@ void PrintAbout()
 
 void ShowSignature()
 {
+   // Signature is now integrated into UpdatePositionDisplay() for clean unified display
+   // Only clear Comment if signature is disabled
    if(!ShowSignatureOnChart) { Comment(""); return; }
-   string lines = StringFormat("%s\n%s\nSupport: %s", EA_NAME_VERSION, COMPANY_WEBSITE, SUPPORT_CONTACT);
-   Comment(lines);
+   // Don't use Comment() anymore - it's integrated in the unified display
+   Comment("");
 }
 
 // Check license periodically (automatic - daily at 00:00 + polling every 10 min)
@@ -1427,7 +1417,6 @@ void CheckLicensePeriodic()
    // Perform daily check
    if(shouldCheckDaily)
    {
-      Print("LicenseValidator: Daily license check (00:00)...");
       bool valid = g_licenseValidator.GetLicenseConfig(false); // Force API call
       g_lastLicenseCheck = now;
       
@@ -1435,17 +1424,14 @@ void CheckLicensePeriodic()
       {
          LicenseCache info = g_licenseValidator.GetLicenseInfo();
          g_lastUpdatedTimestamp = info.lastUpdated;
-         Print("LicenseValidator: Daily license check successful.");
       }
       else
       {
-         Print("LicenseValidator: Daily license check failed. Using cached license if available.");
       }
    }
    // Perform polling check (for admin updates)
    else if(shouldCheckPoll)
    {
-      Print("LicenseValidator: Polling for subscription updates...");
       
       // Always call API to check for updates (don't use cache)
       LicenseCache currentInfo = g_licenseValidator.GetLicenseInfo();
@@ -1462,20 +1448,11 @@ void CheckLicensePeriodic()
       {
          LicenseCache newInfo = g_licenseValidator.GetLicenseInfo();
          
-         Print("LicenseValidator: [DEBUG] After polling - Valid: ", newInfo.valid ? "true" : "false", ", Expiry: ", newInfo.expiryDate, ", LastUpdated: ", newInfo.lastUpdated);
          
          // Check if subscription was updated by comparing lastUpdated timestamps
          if(StringLen(oldLastUpdated) == 0 || StringCompare(oldLastUpdated, newInfo.lastUpdated) != 0)
          {
-            Print("==========================================");
-            Print("LicenseValidator: Subscription updated detected! Refreshing license...");
-            PrintFormat("LicenseValidator: Old lastUpdated: %s", oldLastUpdated);
-            PrintFormat("LicenseValidator: New lastUpdated: %s", newInfo.lastUpdated);
-            PrintFormat("LicenseValidator: Old expiryDate: %s", oldExpiryDate);
-            PrintFormat("LicenseValidator: New expiryDate: %s", newInfo.expiryDate);
-            PrintFormat("LicenseValidator: Old valid: %s", oldValid ? "true" : "false");
-            PrintFormat("LicenseValidator: New valid: %s", newInfo.valid ? "true" : "false");
-            Print("==========================================");
+            Print("LicenseValidator: Subscription updated detected. Expiry: " + newInfo.expiryDate);
             
             // Show alert when expiry is updated (only if expiry date changed)
             if(StringCompare(oldExpiryDate, newInfo.expiryDate) != 0)
@@ -1501,26 +1478,931 @@ void CheckLicensePeriodic()
                Alert("License Expired! EA will stop. Expiry: " + newInfo.expiryDate);
             }
          }
-         else
-         {
-            Print("LicenseValidator: No subscription updates detected.");
-         }
       }
       else
       {
-         Print("LicenseValidator: Polling API call failed. Will retry on next poll.");
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Position Management Functions                                    |
+//+------------------------------------------------------------------+
+
+// Calculate profit by symbol (OPEN positions only)
+void CalculateProfitBySymbol(double &profitArray[], string &symbolArray[], int &count)
+{
+   count = 0;
+   ArrayResize(profitArray, 0);
+   ArrayResize(symbolArray, 0);
+   
+   // Iterate through all open positions
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            string symbol = position.Symbol();
+            double profit = position.Profit();
+            double swap = position.Swap();
+            double commission = position.Commission();
+            double totalProfit = profit + swap + commission;
+         
+            // Find or add symbol
+            int symbolIndex = FindSymbolIndex(symbolArray, symbol, count);
+            if(symbolIndex == -1)
+            {
+               // New symbol - add it
+               ArrayResize(profitArray, count + 1);
+               ArrayResize(symbolArray, count + 1);
+               profitArray[count] = totalProfit;
+               symbolArray[count] = symbol;
+               count++;
+            }
+            else
+            {
+               // Existing symbol - add profit
+               profitArray[symbolIndex] += totalProfit;
+            }
+         }
+      }
+   }
+}
+
+// Find symbol index in array
+int FindSymbolIndex(string &symbolArray[], string symbol, int arraySize)
+{
+   for(int i = 0; i < arraySize; i++)
+   {
+      if(symbolArray[i] == symbol)
+         return i;
+   }
+   return -1;
+}
+
+// Calculate pip value for a symbol
+double CalculatePipValue(string symbol, double lotSize)
+{
+   if(!symbolInfo.Name(symbol))
+   {
+      Print("Error: Cannot get symbol info for ", symbol);
+      return 0.0;
+   }
+   
+   // Get symbol properties
+   double contractSize = symbolInfo.ContractSize();
+   double tickSize = symbolInfo.TickSize();
+   double tickValue = symbolInfo.TickValue();
+   int digits = (int)symbolInfo.Digits();
+   
+   // Calculate point value
+   double point = symbolInfo.Point();
+   double pointValue = 0.0;
+   
+   // For most symbols: point value = tick value * (point / tick size)
+   if(tickSize > 0)
+   {
+      pointValue = tickValue * (point / tickSize);
+   }
+   else
+   {
+      pointValue = tickValue;
+   }
+   
+   // Calculate pip value (1 pip = 10 points for 5-digit, 1 point for 3-digit)
+   double pipSize = point;
+   if(digits == 5 || digits == 3)
+   {
+      pipSize = point * 10;  // 1 pip = 10 points
+   }
+   
+   double pipValue = pointValue * (pipSize / point) * lotSize;
+   
+   // Convert to account currency if needed
+   string profitCurrency = symbolInfo.CurrencyProfit();
+   if(profitCurrency != g_accountCurrency)
+   {
+      // Need to convert currency
+      string baseCurrency = symbolInfo.CurrencyBase();
+      string accountCurrency = g_accountCurrency;
+      
+      // Try to get conversion rate
+      double conversionRate = GetCurrencyConversionRate(profitCurrency, accountCurrency);
+      if(conversionRate > 0)
+      {
+         pipValue = pipValue * conversionRate;
+      }
+   }
+   
+   return pipValue;
+}
+
+// Get currency conversion rate
+double GetCurrencyConversionRate(string fromCurrency, string toCurrency)
+{
+   if(fromCurrency == toCurrency)
+      return 1.0;
+   
+   // Try to find a direct conversion symbol
+   string symbol1 = fromCurrency + toCurrency;
+   string symbol2 = toCurrency + fromCurrency;
+   
+   if(SymbolSelect(symbol1, true))
+   {
+      double bid = SymbolInfoDouble(symbol1, SYMBOL_BID);
+      if(bid > 0) return bid;
+   }
+   
+   if(SymbolSelect(symbol2, true))
+   {
+      double bid = SymbolInfoDouble(symbol2, SYMBOL_BID);
+      if(bid > 0) return 1.0 / bid;
+   }
+   
+   // If USD is involved, try USD pairs
+   if(fromCurrency == "USD")
+   {
+      string usdSymbol = "USD" + toCurrency;
+      if(SymbolSelect(usdSymbol, true))
+      {
+         double bid = SymbolInfoDouble(usdSymbol, SYMBOL_BID);
+         if(bid > 0) return bid;
+      }
+   }
+   
+   if(toCurrency == "USD")
+   {
+      string usdSymbol = fromCurrency + "USD";
+      if(SymbolSelect(usdSymbol, true))
+      {
+         double bid = SymbolInfoDouble(usdSymbol, SYMBOL_BID);
+         if(bid > 0) return 1.0 / bid;
+      }
+   }
+   
+   // Default: assume 1:1 if cannot convert (not ideal but safe)
+   Print("Warning: Cannot convert ", fromCurrency, " to ", toCurrency, ". Using 1.0");
+   return 1.0;
+}
+
+// Check and execute auto-close
+void CheckAutoClose()
+{
+   if(AutoCloseBySymbol)
+   {
+      // Mode 1: Close positions by symbol (only the symbol that reached threshold)
+      double profitBySymbol[];
+      string symbols[];
+      int count = 0;
+      
+      CalculateProfitBySymbol(profitBySymbol, symbols, count);
+      
+      for(int i = 0; i < count; i++)
+      {
+         if(profitBySymbol[i] >= AutoCloseProfitAmount)
+         {
+            Print("Auto-close triggered for ", symbols[i], ": Profit = ", profitBySymbol[i], " ", g_accountCurrency);
+            // Close all positions of this symbol
+            CloseAllPositionsBySymbol(symbols[i]);
+         }
+      }
+   }
+   else
+   {
+      // Mode 2: Close ALL positions on account when total profit reaches threshold
+      double totalProfit = 0.0;
+      
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket > 0)
+         {
+            if(position.SelectByTicket(ticket))
+            {
+               totalProfit += position.Profit() + position.Swap() + position.Commission();
+            }
+         }
+      }
+      
+      if(totalProfit >= AutoCloseProfitAmount)
+      {
+         Print("Auto-close triggered for ALL positions: Total Profit = ", totalProfit, " ", g_accountCurrency);
+         // Close all positions on the account
+         CloseAllPositions();
+      }
+   }
+}
+
+// Close all positions by symbol
+void CloseAllPositionsBySymbol(string symbol)
+{
+   int closedCount = 0;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         string posSymbol = PositionGetString(POSITION_SYMBOL);
+         if(posSymbol == symbol)
+         {
+            if(trade.PositionClose(ticket))
+            {
+               closedCount++;
+               Print("Closed position: ", ticket, " (", symbol, ")");
+            }
+            else
+            {
+               Print("Failed to close position: ", ticket, " - Error: ", GetLastError());
+            }
+         }
+      }
+   }
+   
+   if(closedCount > 0)
+   {
+      Print("Auto-closed ", closedCount, " position(s) for symbol: ", symbol);
+   }
+}
+
+// Close all positions on the account
+void CloseAllPositions()
+{
+   int closedCount = 0;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            string symbol = position.Symbol();
+            if(trade.PositionClose(ticket))
+            {
+               closedCount++;
+               Print("Closed position: ", ticket, " (", symbol, ")");
+            }
+            else
+            {
+               Print("Failed to close position: ", ticket, " - Error: ", GetLastError());
+            }
+         }
+      }
+   }
+   
+   if(closedCount > 0)
+   {
+      Print("Auto-closed ", closedCount, " position(s) on account");
+   }
+}
+
+// Check account profit threshold and close all positions
+void CheckAccountProfitClose()
+{
+   double totalProfit = 0.0;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            totalProfit += position.Profit() + position.Swap() + position.Commission();
+         }
+      }
+   }
+   
+   if(totalProfit >= AccountProfitThreshold)
+   {
+      PrintFormat("Account profit threshold reached: %.2f %s >= %.2f %s. Closing all positions.", 
+                  totalProfit, g_accountCurrency, AccountProfitThreshold, g_accountCurrency);
+      CloseAllPositions();
+   }
+}
+
+// Check account loss threshold and close all positions (Emergency Stop Loss)
+void CheckAccountLossClose()
+{
+   double totalProfit = 0.0;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            totalProfit += position.Profit() + position.Swap() + position.Commission();
+         }
+      }
+   }
+   
+   // Convert positive input to negative internally (user enters 200.0, we use -200.0)
+   double lossThreshold = -MathAbs(AccountLossThreshold);
+   
+   if(totalProfit <= lossThreshold)
+   {
+      PrintFormat("Account loss threshold reached: %.2f %s <= %.2f %s. Emergency closing all positions.", 
+                  totalProfit, g_accountCurrency, lossThreshold, g_accountCurrency);
+      CloseAllPositions();
+   }
+}
+
+// Calculate break-even price for a symbol
+double CalculateBreakEvenPrice(string symbol)
+{
+   double totalVolume = 0.0;
+   double weightedPrice = 0.0;
+   double totalSwap = 0.0;
+   double totalCommission = 0.0;
+   ENUM_POSITION_TYPE firstType = WRONG_VALUE;
+   bool hasMixedTypes = false;
+   
+   // First pass: collect data and check for mixed position types
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            if(position.Symbol() == symbol)
+            {
+               ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)position.PositionType();
+               if(firstType == WRONG_VALUE)
+               {
+                  firstType = posType;
+               }
+               else if(firstType != posType)
+               {
+                  hasMixedTypes = true;
+               }
+            }
+         }
+      }
+   }
+   
+   // Second pass: calculate weighted average
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            if(position.Symbol() == symbol)
+            {
+               ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)position.PositionType();
+               double volume = position.Volume();
+               double openPrice = position.PriceOpen();
+               double swap = position.Swap();
+               double commission = position.Commission();
+               
+               totalVolume += volume;
+               weightedPrice += openPrice * volume;
+               totalSwap += swap;
+               totalCommission += commission;
+            }
+         }
+      }
+   }
+   
+   if(totalVolume <= 0)
+      return 0.0;
+   
+   // Calculate weighted average open price
+   double breakEvenPrice = weightedPrice / totalVolume;
+   
+   // Adjust for swaps and commissions
+   double totalCosts = totalSwap + totalCommission;
+   
+   if(!hasMixedTypes && firstType != WRONG_VALUE && totalCosts != 0.0)
+   {
+      double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+      double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      
+      if(tickSize > 0 && tickValue > 0 && point > 0)
+      {
+         // Point value per lot = tickValue * (point / tickSize)
+         double pointValuePerLot = tickValue * (point / tickSize);
+         double totalPointValue = pointValuePerLot * totalVolume;
+         
+         if(totalPointValue > 0)
+         {
+            // Calculate price adjustment needed to cover costs
+            double adjustment = totalCosts / totalPointValue;
+            
+            if(firstType == POSITION_TYPE_BUY)
+            {
+               breakEvenPrice += adjustment;
+            }
+            else if(firstType == POSITION_TYPE_SELL)
+            {
+               breakEvenPrice -= adjustment;
+            }
+         }
+      }
+   }
+   
+   return breakEvenPrice;
+}
+
+// Update SL/TP for all positions based on break-even price
+void UpdateSLTP()
+{
+   // Group positions by symbol and calculate break-even for each
+   string processedSymbols[];
+   ArrayResize(processedSymbols, 0);
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            string symbol = position.Symbol();
+            
+            // Check if we already processed this symbol
+            bool alreadyProcessed = false;
+            for(int j = 0; j < ArraySize(processedSymbols); j++)
+            {
+               if(processedSymbols[j] == symbol)
+               {
+                  alreadyProcessed = true;
+                  break;
+               }
+            }
+            
+            if(!alreadyProcessed)
+            {
+               // Add to processed list
+               int size = ArraySize(processedSymbols);
+               ArrayResize(processedSymbols, size + 1);
+               processedSymbols[size] = symbol;
+               
+               // Calculate break-even price for this symbol
+               double breakEvenPrice = CalculateBreakEvenPrice(symbol);
+               
+               if(breakEvenPrice > 0)
+               {
+                  // Update all positions of this symbol
+                  UpdateSLTPForSymbol(symbol, breakEvenPrice);
+               }
+            }
+         }
+      }
+   }
+}
+
+// Update SL/TP for all positions of a symbol based on break-even
+void UpdateSLTPForSymbol(string symbol, double breakEvenPrice)
+{
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   
+   // Get position type (assuming all positions of same symbol have same type, or use first one)
+   ENUM_POSITION_TYPE posType = WRONG_VALUE;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            if(position.Symbol() == symbol)
+            {
+               posType = (ENUM_POSITION_TYPE)position.PositionType();
+               break;
+            }
+         }
+      }
+   }
+   
+   if(posType == WRONG_VALUE)
+      return;
+   
+   // Calculate SL/TP based on break-even price
+   double newSL = 0.0;
+   double newTP = 0.0;
+   bool needSL = EnableSLManagement;
+   bool needTP = EnableTPManagement;
+   
+   if(SLTPMode == MODE_POINTS)
+   {
+      // Calculate SL/TP by points from break-even
+      if(posType == POSITION_TYPE_BUY)
+      {
+         if(needSL) newSL = breakEvenPrice - (StopLossPoints * point);
+         if(needTP) newTP = breakEvenPrice + (TakeProfitPoints * point);
+      }
+      else // SELL
+      {
+         if(needSL) newSL = breakEvenPrice + (StopLossPoints * point);
+         if(needTP) newTP = breakEvenPrice - (TakeProfitPoints * point);
+      }
+   }
+   else // MODE_AMOUNT
+   {
+      // Calculate SL/TP by amount from break-even
+      // Get total volume for this symbol to calculate point value
+      double totalVolume = 0.0;
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket > 0)
+         {
+            if(position.SelectByTicket(ticket))
+            {
+               if(position.Symbol() == symbol)
+               {
+                  totalVolume += position.Volume();
+               }
+            }
+         }
+      }
+      
+      if(totalVolume > 0)
+      {
+         // Calculate point value for total volume
+         double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+         double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+         
+         if(tickSize > 0 && tickValue > 0 && point > 0)
+         {
+            // Point value per lot = tickValue * (point / tickSize)
+            double pointValuePerLot = tickValue * (point / tickSize);
+            double totalPointValue = pointValuePerLot * totalVolume;
+            
+            if(totalPointValue > 0)
+            {
+               // Calculate points distance needed for amount
+               double slPointsDistance = StopLossAmount / totalPointValue;
+               double tpPointsDistance = TakeProfitAmount / totalPointValue;
+               
+               if(posType == POSITION_TYPE_BUY)
+               {
+                  if(needSL) newSL = breakEvenPrice - (slPointsDistance * point);
+                  if(needTP) newTP = breakEvenPrice + (tpPointsDistance * point);
+               }
+               else // SELL
+               {
+                  if(needSL) newSL = breakEvenPrice + (slPointsDistance * point);
+                  if(needTP) newTP = breakEvenPrice - (tpPointsDistance * point);
+               }
+            }
+         }
+      }
+   }
+   
+   // Normalize prices
+   if(tickSize > 0)
+   {
+      newSL = NormalizeDouble(MathFloor(newSL / tickSize) * tickSize, digits);
+      newTP = NormalizeDouble(MathFloor(newTP / tickSize) * tickSize, digits);
+   }
+   
+   // Apply SL/TP to all positions of this symbol
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(position.SelectByTicket(ticket))
+         {
+            if(position.Symbol() == symbol)
+            {
+               double currentSL = position.StopLoss();
+               double currentTP = position.TakeProfit();
+               
+               // Use current values if management is disabled, otherwise use calculated values
+               double finalSL = EnableSLManagement ? newSL : currentSL;
+               double finalTP = EnableTPManagement ? newTP : currentTP;
+               
+               // Only modify if different
+               bool needModify = false;
+               if(EnableSLManagement && MathAbs(finalSL - currentSL) > point)
+                  needModify = true;
+               if(EnableTPManagement && MathAbs(finalTP - currentTP) > point)
+                  needModify = true;
+               
+               if(needModify)
+               {
+                  if(trade.PositionModify(ticket, finalSL, finalTP))
+                  {
+                  }
+                  else
+                  {
+                  }
+               }
+            }
+         }
+      }
+   }
+}
+
+// Update display on chart - Unified display method with clear visual hierarchy
+void UpdatePositionDisplay()
+{
+   // Clear all chart objects and Comment to avoid overlap
+   ClearChartObjects();
+   Comment("");  // Clear Comment to avoid overlap with chart objects
+   
+   // Color definitions for visual hierarchy
+   color colorTitle = clrDodgerBlue;        // Main title - bright blue
+   color colorSection = clrGold;            // Section headers - gold
+   color colorProfit = clrLimeGreen;        // Profit - green
+   color colorLoss = clrRed;                // Loss - red
+   color colorWarning = clrYellow;          // Warning/Threshold - yellow
+   color colorSettings = clrSilver;          // Settings text - silver
+   color colorContent = clrWhite;           // Regular content - white
+   color colorBrand = clrAqua;              // Brand info - cyan
+   color colorInfo = clrLightGray;          // Info text - light gray
+   
+   // Font size definitions - consistent across all display
+   int titleFontSize = FontSize + 1;  // All titles use same size
+   int contentFontSize = FontSize;    // All content/info use same size
+   
+   int yOffset = 10;
+   int xOffset = 10;
+   int lineHeight = 20;
+   int sectionSpacing = 5;
+   
+   // ===== EMPTY ROW AT TOP (to avoid overlap with MT5 chart symbol info) =====
+   yOffset += lineHeight;
+   
+   // ===== BRAND/SIGNATURE SECTION (if enabled) =====
+   if(ShowSignatureOnChart)
+   {
+      // EA Name/Version (Title)
+      string brandName = g_objectPrefix + "Brand";
+      ObjectCreate(0, brandName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, brandName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, brandName, OBJPROP_XDISTANCE, xOffset);
+      ObjectSetInteger(0, brandName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, brandName, OBJPROP_COLOR, colorBrand);
+      ObjectSetInteger(0, brandName, OBJPROP_FONTSIZE, titleFontSize);
+      ObjectSetString(0, brandName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, brandName, OBJPROP_TEXT, EA_NAME_VERSION);
+      yOffset += lineHeight;
+      
+      // Website (Content)
+      string websiteName = g_objectPrefix + "Website";
+      ObjectCreate(0, websiteName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, websiteName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, websiteName, OBJPROP_XDISTANCE, xOffset);
+      ObjectSetInteger(0, websiteName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, websiteName, OBJPROP_COLOR, colorInfo);
+      ObjectSetInteger(0, websiteName, OBJPROP_FONTSIZE, contentFontSize);
+      ObjectSetString(0, websiteName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, websiteName, OBJPROP_TEXT, COMPANY_WEBSITE);
+      yOffset += lineHeight;
+      
+      // Support (Content)
+      string supportName = g_objectPrefix + "Support";
+      ObjectCreate(0, supportName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, supportName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, supportName, OBJPROP_XDISTANCE, xOffset);
+      ObjectSetInteger(0, supportName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, supportName, OBJPROP_COLOR, colorInfo);
+      ObjectSetInteger(0, supportName, OBJPROP_FONTSIZE, contentFontSize);
+      ObjectSetString(0, supportName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, supportName, OBJPROP_TEXT, "Support: " + SUPPORT_CONTACT);
+      yOffset += lineHeight + sectionSpacing;
+   }
+   
+   // Only show position management display if enabled
+   if(!ShowProfitDisplay) 
+   {
+      ChartRedraw();
+      return;
+   }
+   
+   // ===== MAIN TITLE =====
+   string titleName = g_objectPrefix + "Title";
+   ObjectCreate(0, titleName, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, titleName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, titleName, OBJPROP_XDISTANCE, xOffset);
+   ObjectSetInteger(0, titleName, OBJPROP_YDISTANCE, yOffset);
+   ObjectSetInteger(0, titleName, OBJPROP_COLOR, colorTitle);
+   ObjectSetInteger(0, titleName, OBJPROP_FONTSIZE, titleFontSize);
+   ObjectSetString(0, titleName, OBJPROP_FONT, FontName);
+   ObjectSetString(0, titleName, OBJPROP_TEXT, "Open Positions Profit by Symbol");
+   yOffset += lineHeight + 10;
+   
+   // Calculate profit by symbol
+   double profitBySymbol[];
+   string symbols[];
+   int count = 0;
+   CalculateProfitBySymbol(profitBySymbol, symbols, count);
+   
+   if(count == 0)
+   {
+      // No positions message
+      string noPosName = g_objectPrefix + "NoPos";
+      ObjectCreate(0, noPosName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, noPosName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, noPosName, OBJPROP_XDISTANCE, xOffset);
+      ObjectSetInteger(0, noPosName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, noPosName, OBJPROP_COLOR, colorContent);
+      ObjectSetInteger(0, noPosName, OBJPROP_FONTSIZE, contentFontSize);
+      ObjectSetString(0, noPosName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, noPosName, OBJPROP_TEXT, "No open positions");
+      yOffset += lineHeight + sectionSpacing;
+   }
+   else
+   {
+      // ===== SYMBOL PROFITS SECTION =====
+      string sectionName = g_objectPrefix + "Section";
+      ObjectCreate(0, sectionName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, sectionName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, sectionName, OBJPROP_XDISTANCE, xOffset);
+      ObjectSetInteger(0, sectionName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, sectionName, OBJPROP_COLOR, colorSection);
+      ObjectSetInteger(0, sectionName, OBJPROP_FONTSIZE, titleFontSize);
+      ObjectSetString(0, sectionName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, sectionName, OBJPROP_TEXT, "Symbol Profit:");
+      yOffset += lineHeight;
+      
+      // Display each symbol profit
+      double totalProfit = 0.0;
+      for(int i = 0; i < count; i++)
+      {
+         string objName = g_objectPrefix + "Symbol_" + IntegerToString(i);
+         ObjectCreate(0, objName, OBJ_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, xOffset + 15);  // Indent for content
+         ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, yOffset);
+         
+         // Color based on profit and threshold
+         color profitColor = profitBySymbol[i] >= 0 ? colorProfit : colorLoss;
+         if(EnableAutoClose && profitBySymbol[i] >= AutoCloseProfitAmount)
+         {
+            profitColor = colorWarning;  // Highlight if near auto-close threshold
+         }
+         
+         ObjectSetInteger(0, objName, OBJPROP_COLOR, profitColor);
+         ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, contentFontSize);
+         ObjectSetString(0, objName, OBJPROP_FONT, FontName);
+         
+         string profitText = StringFormat("  %s: %s %.2f", 
+                                          symbols[i], 
+                                          g_accountCurrency,
+                                          profitBySymbol[i]);
+         ObjectSetString(0, objName, OBJPROP_TEXT, profitText);
+         
+         totalProfit += profitBySymbol[i];
+         yOffset += lineHeight;
+      }
+      
+      // ===== TOTAL PROFIT =====
+      yOffset += sectionSpacing;
+      string totalName = g_objectPrefix + "Total";
+      ObjectCreate(0, totalName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, totalName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, totalName, OBJPROP_XDISTANCE, xOffset);
+      ObjectSetInteger(0, totalName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, totalName, OBJPROP_COLOR, totalProfit >= 0 ? colorProfit : colorLoss);
+      ObjectSetInteger(0, totalName, OBJPROP_FONTSIZE, titleFontSize);
+      ObjectSetString(0, totalName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, totalName, OBJPROP_TEXT, StringFormat("TOTAL: %s %.2f", 
+                                                                 g_accountCurrency,
+                                                                 totalProfit));
+      yOffset += lineHeight + 10;
+   }
+   
+   // ===== SETTINGS SECTION =====
+   string settingsHeaderName = g_objectPrefix + "SettingsHeader";
+   ObjectCreate(0, settingsHeaderName, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, settingsHeaderName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, settingsHeaderName, OBJPROP_XDISTANCE, xOffset);
+   ObjectSetInteger(0, settingsHeaderName, OBJPROP_YDISTANCE, yOffset);
+   ObjectSetInteger(0, settingsHeaderName, OBJPROP_COLOR, colorSection);
+   ObjectSetInteger(0, settingsHeaderName, OBJPROP_FONTSIZE, titleFontSize);
+   ObjectSetString(0, settingsHeaderName, OBJPROP_FONT, FontName);
+   ObjectSetString(0, settingsHeaderName, OBJPROP_TEXT, "Settings:");
+   yOffset += lineHeight;
+   
+   // Build settings text
+   string settingsText = "";
+   int settingsLine = 0;
+   
+   // Auto-Close
+   if(EnableAutoClose)
+   {
+      string autoCloseName = g_objectPrefix + "Setting_" + IntegerToString(settingsLine);
+      ObjectCreate(0, autoCloseName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_XDISTANCE, xOffset + 15);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_COLOR, colorSettings);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_FONTSIZE, contentFontSize);
+      ObjectSetString(0, autoCloseName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, autoCloseName, OBJPROP_TEXT, StringFormat("  Auto-Close: ON (%.2f %s, %s)", 
+                                                                    AutoCloseProfitAmount, g_accountCurrency,
+                                                                    AutoCloseBySymbol ? "By Symbol" : "All Positions"));
+      yOffset += lineHeight;
+      settingsLine++;
+   }
+   else
+   {
+      string autoCloseName = g_objectPrefix + "Setting_" + IntegerToString(settingsLine);
+      ObjectCreate(0, autoCloseName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_XDISTANCE, xOffset + 15);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_COLOR, colorSettings);
+      ObjectSetInteger(0, autoCloseName, OBJPROP_FONTSIZE, contentFontSize);
+      ObjectSetString(0, autoCloseName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, autoCloseName, OBJPROP_TEXT, "  Auto-Close: OFF");
+      yOffset += lineHeight;
+      settingsLine++;
+   }
+   
+   // Account Profit Threshold
+   if(EnableAccountProfitClose)
+   {
+      string accProfitName = g_objectPrefix + "Setting_" + IntegerToString(settingsLine);
+      ObjectCreate(0, accProfitName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, accProfitName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, accProfitName, OBJPROP_XDISTANCE, xOffset + 15);
+      ObjectSetInteger(0, accProfitName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, accProfitName, OBJPROP_COLOR, colorSettings);
+      ObjectSetInteger(0, accProfitName, OBJPROP_FONTSIZE, contentFontSize);
+      ObjectSetString(0, accProfitName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, accProfitName, OBJPROP_TEXT, StringFormat("  Account Profit: %.2f %s", 
+                                                                    AccountProfitThreshold, g_accountCurrency));
+      yOffset += lineHeight;
+      settingsLine++;
+   }
+   
+   // Account Loss Threshold
+   if(EnableAccountLossClose)
+   {
+      string accLossName = g_objectPrefix + "Setting_" + IntegerToString(settingsLine);
+      ObjectCreate(0, accLossName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, accLossName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, accLossName, OBJPROP_XDISTANCE, xOffset + 15);
+      ObjectSetInteger(0, accLossName, OBJPROP_YDISTANCE, yOffset);
+      ObjectSetInteger(0, accLossName, OBJPROP_COLOR, colorSettings);
+      ObjectSetInteger(0, accLossName, OBJPROP_FONTSIZE, contentFontSize);
+      ObjectSetString(0, accLossName, OBJPROP_FONT, FontName);
+      ObjectSetString(0, accLossName, OBJPROP_TEXT, StringFormat("  Account Loss: -%.2f %s", 
+                                                                  AccountLossThreshold, g_accountCurrency));
+      yOffset += lineHeight;
+      settingsLine++;
+   }
+   
+   // SL/TP Management
+   string sltpName = g_objectPrefix + "Setting_" + IntegerToString(settingsLine);
+   ObjectCreate(0, sltpName, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, sltpName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, sltpName, OBJPROP_XDISTANCE, xOffset + 15);
+   ObjectSetInteger(0, sltpName, OBJPROP_YDISTANCE, yOffset);
+   ObjectSetInteger(0, sltpName, OBJPROP_COLOR, colorSettings);
+   ObjectSetInteger(0, sltpName, OBJPROP_FONTSIZE, contentFontSize);
+   ObjectSetString(0, sltpName, OBJPROP_FONT, FontName);
+   
+   string sltpText = "  SL/TP: ";
+   if(EnableSLManagement && EnableTPManagement)
+      sltpText += "Both ON";
+   else if(EnableSLManagement)
+      sltpText += "SL ON";
+   else if(EnableTPManagement)
+      sltpText += "TP ON";
+   else
+      sltpText += "OFF";
+   
+   if(EnableSLManagement || EnableTPManagement)
+      sltpText += StringFormat(" (%s)", SLTPMode == MODE_POINTS ? "Points" : "Amount");
+   
+   ObjectSetString(0, sltpName, OBJPROP_TEXT, sltpText);
+   
+   ChartRedraw();
+}
+
+// Clear all chart objects
+void ClearChartObjects()
+{
+   int totalObjects = ObjectsTotal(0);
+   for(int i = totalObjects - 1; i >= 0; i--)
+   {
+      string objName = ObjectName(0, i);
+      if(StringFind(objName, g_objectPrefix) == 0)
+      {
+         ObjectDelete(0, objName);
       }
    }
 }
 
 int OnInit()
 {
-   // Clear marker for OnInit logs - makes it easy to find in log
-   Print("==========================================");
-   Print("==========================================");
-   Print("========== EA INITIALIZATION START ========");
-   Print("==========================================");
-   Print("==========================================");
    
    // Initialize license validator (automatic - gets current MT5 login)
    if(StringLen(UserId) > 0)
@@ -1540,14 +2422,6 @@ int OnInit()
          Print("LicenseValidator: License configuration failed on startup!");
          LicenseCache info = g_licenseValidator.GetLicenseInfo();
          
-         // DEBUG: Log all info for debugging
-         Print("==========================================");
-         Print("LicenseValidator: [DEBUG] ErrorType: '", info.errorType, "'");
-         Print("LicenseValidator: [DEBUG] ErrorMessage: '", info.errorMessage, "'");
-         Print("LicenseValidator: [DEBUG] Valid: ", info.valid ? "true" : "false");
-         Print("LicenseValidator: [DEBUG] ExpiryDate: '", info.expiryDate, "'");
-         Print("LicenseValidator: [DEBUG] ErrorType length: ", StringLen(info.errorType));
-         Print("==========================================");
          
          // Check error type to show appropriate message
          if(StringLen(info.errorType) > 0)
@@ -1601,7 +2475,6 @@ int OnInit()
          // Check if license is expired (only if not invalid user)
          if(StringLen(info.errorType) == 0)
          {
-            Print("LicenseValidator: [DEBUG] No errorType detected, checking if expired...");
             if(g_licenseValidator.IsExpired())
             {
                Print("==========================================");
@@ -1685,64 +2558,48 @@ int OnInit()
    
    long login_id = (long)AccountInfoInteger(ACCOUNT_LOGIN);
    
-   // Determine mode from account configuration (if available)
-   // Start with input values as fallback
-   ENUM_MODE determinedMode = Mode; // Use input as fallback
-   int determinedMasterLogin = clogin_master; // Use input as fallback
+   // Initialize position management
+   g_accountCurrency = AccountInfoString(ACCOUNT_CURRENCY);
+   g_lastPositionUpdate = 0;
    
-   Print("==========================================");
-   Print("OnInit: [DEBUG] Mode determination starting");
-   PrintFormat("OnInit: [DEBUG] Initial values - Mode=%s, clogin_master=%d", EnumToString(Mode), clogin_master);
-   PrintFormat("OnInit: [DEBUG] g_licenseValidator=%s", g_licenseValidator != NULL ? "available" : "NULL");
-   Print("==========================================");
+   // Determine mode from account configuration (REQUIRED - backend must provide role)
+   ENUM_MODE determinedMode = MODE_SLAVE; // Default initialization (will be overridden by backend)
+   int determinedMasterLogin = clogin_master; // Use input as fallback for master login only
+   
    
    // Try to get mode from backend config
    if(g_licenseValidator != NULL)
    {
       AccountConfig accConfig = g_licenseValidator.GetCurrentAccountConfig();
       
-      // DEBUG: Log account config details
-      Print("==========================================");
-      Print("LicenseValidator: [DEBUG] Account Configuration Check");
-      PrintFormat("LicenseValidator: [DEBUG] Current MT5 Login: %d", login_id);
-      PrintFormat("LicenseValidator: [DEBUG] Account Role: '%s'", accConfig.role);
-      PrintFormat("LicenseValidator: [DEBUG] Master Login: '%s'", accConfig.masterLogin);
-      PrintFormat("LicenseValidator: [DEBUG] Account Name: '%s'", accConfig.accountName);
-      PrintFormat("LicenseValidator: [DEBUG] LoginId: '%s'", accConfig.loginId);
       Print("==========================================");
       
       if(StringLen(accConfig.role) > 0)
       {
-         PrintFormat("OnInit: [DEBUG] Backend returned role: '%s'", accConfig.role);
          if(accConfig.role == "master")
          {
             determinedMode = MODE_MASTER;
             determinedMasterLogin = (int)login_id; // Master is this account
-            PrintFormat("LicenseValidator: Account configured as MASTER (from backend)");
-            PrintFormat("OnInit: [DEBUG] Set determinedMode=MODE_MASTER, determinedMasterLogin=%d", determinedMasterLogin);
+            Print("LicenseValidator: Account configured as MASTER");
          }
          else if(accConfig.role == "slave")
          {
             determinedMode = MODE_SLAVE;
-            PrintFormat("OnInit: [DEBUG] Backend returned SLAVE role");
-            PrintFormat("OnInit: [DEBUG] accConfig.masterLogin='%s' (length=%d)", accConfig.masterLogin, StringLen(accConfig.masterLogin));
             
             if(StringLen(accConfig.masterLogin) > 0)
             {
                determinedMasterLogin = (int)StringToInteger(accConfig.masterLogin);
-               PrintFormat("LicenseValidator: Account configured as SLAVE (from backend), Master: %d", determinedMasterLogin);
-               PrintFormat("OnInit: [DEBUG] Set determinedMasterLogin=%d from backend", determinedMasterLogin);
+               PrintFormat("LicenseValidator: Account configured as SLAVE, Master: %d", determinedMasterLogin);
             }
             else
             {
                Print("==========================================");
                Print("LicenseValidator: [WARNING] Slave account but no master login in config.");
-               PrintFormat("LicenseValidator: [WARNING] Using fallback master login from input: %d", clogin_master);
+               PrintFormat("LicenseValidator: Using fallback master login from input: %d", clogin_master);
                Print("==========================================");
                if(clogin_master > 0)
                {
                   determinedMasterLogin = clogin_master;
-                  PrintFormat("OnInit: [DEBUG] Set determinedMasterLogin=%d from input fallback", determinedMasterLogin);
                }
                else
                {
@@ -1756,30 +2613,41 @@ int OnInit()
          }
          else
          {
-            PrintFormat("LicenseValidator: Account role: %s (using input mode as fallback)", accConfig.role);
-            PrintFormat("OnInit: [DEBUG] Unknown role '%s', keeping input values", accConfig.role);
+            Print("==========================================");
+            PrintFormat("LicenseValidator: [ERROR] Unknown account role from backend: '%s'", accConfig.role);
+            Print("LicenseValidator: [ERROR] Backend must return 'master' or 'slave' role.");
+            Print("LicenseValidator: [ERROR] EA will be removed from chart.");
+            Print("==========================================");
+            Alert("Invalid account role from backend: " + accConfig.role + ". EA Stopped.");
+            ExpertRemove();
+            return(INIT_FAILED);
          }
       }
       else
       {
          Print("==========================================");
-         Print("LicenseValidator: [WARNING] No account role from backend");
-         PrintFormat("LicenseValidator: [WARNING] Using input Mode=%s, Master Login=%d", EnumToString(Mode), clogin_master);
+         Print("LicenseValidator: [ERROR] No account role returned from backend");
+         Print("LicenseValidator: [ERROR] Backend must return account role ('master' or 'slave').");
+         Print("LicenseValidator: [ERROR] EA will be removed from chart.");
          Print("==========================================");
+         Alert("No account role from backend. EA Stopped.");
+         ExpertRemove();
+         return(INIT_FAILED);
       }
    }
    else
    {
       Print("==========================================");
-      Print("LicenseValidator: [WARNING] License validator not available");
-      PrintFormat("LicenseValidator: [WARNING] Using input Mode=%s, Master Login=%d", EnumToString(Mode), clogin_master);
+      Print("LicenseValidator: [ERROR] License validator not available");
+      Print("LicenseValidator: [ERROR] Cannot determine account mode without backend config.");
+      Print("LicenseValidator: [ERROR] EA will be removed from chart.");
       Print("==========================================");
+      Alert("License validator not available. EA Stopped.");
+      ExpertRemove();
+      return(INIT_FAILED);
    }
    
    Print("==========================================");
-   PrintFormat("OnInit: [DEBUG] Final determined values:");
-   PrintFormat("OnInit: [DEBUG] determinedMode=%s", EnumToString(determinedMode));
-   PrintFormat("OnInit: [DEBUG] determinedMasterLogin=%d", determinedMasterLogin);
    Print("==========================================");
    
    // Validate master login if in master mode
@@ -1803,20 +2671,14 @@ int OnInit()
    // This matches original code behavior where clogin_master was used directly
    Print("==========================================");
    Print("OnInit: [DEBUG] Setting g_masterLogin");
-   PrintFormat("OnInit: [DEBUG] determinedMasterLogin=%d", determinedMasterLogin);
-   PrintFormat("OnInit: [DEBUG] clogin_master=%d", clogin_master);
-   PrintFormat("OnInit: [DEBUG] determinedMode=%s", EnumToString(determinedMode));
-   PrintFormat("OnInit: [DEBUG] login_id=%d", login_id);
    
    if(determinedMasterLogin > 0)
    {
       g_masterLogin = determinedMasterLogin;  // Use backend config
-      PrintFormat("OnInit: [DEBUG] Using backend config: g_masterLogin=%d", g_masterLogin);
    }
    else if(determinedMode == MODE_MASTER)
    {
       g_masterLogin = (int)login_id;  // Master is this account
-      PrintFormat("OnInit: [DEBUG] Using current login (master): g_masterLogin=%d", g_masterLogin);
    }
    else if(determinedMode == MODE_SLAVE)
    {
@@ -1824,13 +2686,12 @@ int OnInit()
       if(determinedMasterLogin > 0)
       {
          g_masterLogin = determinedMasterLogin;
-         PrintFormat("OnInit: [DEBUG] SLAVE mode - Using backend config: g_masterLogin=%d", g_masterLogin);
       }
       else
       {
          Print("==========================================");
          Print("OnInit: [CRITICAL ERROR] SLAVE mode but master login is NOT set from backend!");
-         PrintFormat("OnInit: [CRITICAL ERROR] Backend returned: determinedMasterLogin=%d", determinedMasterLogin);
+         Print("OnInit: [ERROR] Backend did not return valid master login for slave account");
          Print("OnInit: [CRITICAL ERROR] Backend must return accountConfig with masterLogin for slave account");
          Print("OnInit: [CRITICAL ERROR] Check:");
          Print("OnInit: [CRITICAL ERROR]   1. Account accountType is set to 'slave' in database");
@@ -1844,7 +2705,6 @@ int OnInit()
    else
    {
       g_masterLogin = clogin_master;  // Standalone or unknown mode - use input
-      PrintFormat("OnInit: [DEBUG] Using input fallback: g_masterLogin=%d", g_masterLogin);
    }
    
    // DEBUG: Log mode and master login for troubleshooting
@@ -1852,7 +2712,7 @@ int OnInit()
    PrintFormat("EA Configuration: Mode=%s", EnumToString(determinedMode));
    PrintFormat("EA Configuration: Current Login=%d", login_id);
    PrintFormat("EA Configuration: Master Login=%d (from %s)", g_masterLogin, determinedMasterLogin > 0 ? "backend" : "input");
-   PrintFormat("EA Configuration: Input Mode=%s, Input clogin_master=%d", EnumToString(Mode), clogin_master);
+   PrintFormat("EA Configuration: Input clogin_master=%d", clogin_master);
    if(determinedMode == MODE_MASTER)
       Print("EA Configuration: This account is MASTER - will write snapshots");
    else if(determinedMode == MODE_SLAVE)
@@ -1870,7 +2730,8 @@ int OnInit()
       PrintFormat("EA Configuration: This account is SLAVE - will read snapshots from master login %d", g_masterLogin);
    Print("==========================================");
    
-   ShowSignature();
+   // Display unified info (brand + position management)
+   UpdatePositionDisplay();
    if(ShowAboutInExperts) PrintAbout();
    
    InitAliasTable();
@@ -1906,6 +2767,7 @@ void OnDeinit(const int reason)
       delete g_licenseValidator;
       g_licenseValidator = NULL;
    }
+   ClearChartObjects();
    Comment("");
 }
 
@@ -1916,23 +2778,7 @@ void OnTimer()
    static datetime lastTimerLog = 0;
    timerCount++;
    
-   // Reduced logging frequency - only first call and every 5 minutes
-   if(firstTimer || (TimeCurrent() - lastTimerLog > 300))  // Changed from 60 to 300 seconds
-   {
-      Print("==========================================");
-      PrintFormat("OnTimer: [DEBUG] Timer cycle #%d", timerCount);
-      PrintFormat("OnTimer: [DEBUG] g_determinedMode=%s", EnumToString(g_determinedMode));
-      PrintFormat("OnTimer: [DEBUG] g_masterLogin=%d", g_masterLogin);
-      PrintFormat("OnTimer: [DEBUG] Mode input=%s", EnumToString(Mode));
-      PrintFormat("OnTimer: [DEBUG] clogin_master input=%d", clogin_master);
-      if(g_determinedMode == MODE_MASTER)
-         Print("OnTimer: [DEBUG] Will call MasterWriteSnapshot()");
-      else
-         Print("OnTimer: [DEBUG] Will call SlaveSyncCycle()");
-      Print("==========================================");
-      firstTimer = false;
-      lastTimerLog = TimeCurrent();
-   }
+   firstTimer = false;
    
    // Check license status first - stop EA if invalid or expired
    if(g_licenseValidator != NULL)
@@ -1997,6 +2843,45 @@ void OnTimer()
    // Periodic license check
    CheckLicensePeriodic();
    
+   // Position Management (runs for both MASTER and SLAVE modes)
+   datetime currentTime = TimeCurrent();
+   if(currentTime - g_lastPositionUpdate >= UpdateIntervalSeconds)
+   {
+      // Check auto-close (symbol-based)
+      if(EnableAutoClose)
+      {
+         CheckAutoClose();
+      }
+      
+      // Check account-level auto-close (profit threshold)
+      if(EnableAccountProfitClose)
+      {
+         CheckAccountProfitClose();
+      }
+      
+      // Check account-level auto-close (loss threshold - Emergency Stop Loss)
+      if(EnableAccountLossClose)
+      {
+         CheckAccountLossClose();
+      }
+      
+      // Check SL/TP management (only if CopySLTP is disabled, to avoid conflicts)
+      // If CopySLTP is enabled, let copy trading handle SL/TP
+      if((EnableSLManagement || EnableTPManagement) && !CopySLTP)
+      {
+         UpdateSLTP();
+      }
+      
+      // Update display
+      if(ShowProfitDisplay)
+      {
+         UpdatePositionDisplay();
+      }
+      
+      g_lastPositionUpdate = currentTime;
+   }
+   
+   // Core copy trading logic
    if(g_determinedMode == MODE_MASTER) MasterWriteSnapshot();
    else SlaveSyncCycle();
 }
