@@ -136,6 +136,7 @@ export default function AdminConfigPage() {
     { id: 'globalOffers', name: 'Global Offers', icon: TrendingUp },
     { id: 'addOnPricing', name: 'Add-On Pricing', icon: Crown },
     { id: 'eaDefaults', name: 'EA Defaults', icon: Users },
+    { id: 'currencyConversion', name: 'Currency Conversion', icon: DollarSign },
   ]
 
   return (
@@ -264,6 +265,15 @@ export default function AdminConfigPage() {
               <EADefaultsSection
                 config={config.eaDefaults}
                 onUpdate={(data: any) => handleUpdateSection('eaDefaults', data)}
+                isLoading={updateSectionMutation.isLoading}
+              />
+            )}
+
+            {/* Currency Conversion */}
+            {activeSection === 'currencyConversion' && (
+              <CurrencyConversionSection
+                config={config.currencyConversion}
+                onUpdate={(data: any) => handleUpdateSection('currencyConversion', data)}
                 isLoading={updateSectionMutation.isLoading}
               />
             )}
@@ -1070,6 +1080,99 @@ function AddOnPricingSection({ config, onUpdate, isLoading }: any) {
             <option value="monthly">Monthly</option>
             <option value="yearly">Yearly</option>
           </select>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CurrencyConversionSection({ config, onUpdate, isLoading }: any) {
+  const [local, setLocal] = useState(() => {
+    return config ? JSON.parse(JSON.stringify(config)) : null
+  })
+
+  useEffect(() => {
+    if (config) {
+      setLocal(JSON.parse(JSON.stringify(config)))
+    }
+  }, [config])
+
+  if (!local) {
+    return <div>Loading...</div>
+  }
+
+  const handleSave = () => {
+    onUpdate(local)
+  }
+
+  const handleChange = (field: string, value: number) => {
+    setLocal((prev: any) => ({
+      ...prev,
+      [field]: value
+    }))
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Currency Conversion</h2>
+        <p className="text-gray-600 mb-6">
+          Configure USD to AED conversion rate. All prices will be displayed in USD but processed in AED via Stripe checkout.
+        </p>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div className="flex items-start">
+          <AlertCircle className="w-5 h-5 text-blue-600 mr-2 mt-0.5 flex-shrink-0" />
+          <div className="text-sm text-blue-800">
+            <p className="font-semibold mb-1">Note:</p>
+            <ul className="list-disc list-inside space-y-1 ml-2">
+              <li>USD to AED rate is typically around 3.67 (AED is pegged to USD)</li>
+              <li>This rate is used to convert USD prices to AED for Stripe checkout</li>
+              <li>Prices will be displayed in both USD and AED in the subscription page</li>
+              <li>Final payment will be processed in AED</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            USD to AED Conversion Rate
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0.01"
+            value={local.usdToAed || 3.67}
+            onChange={(e) => handleChange('usdToAed', parseFloat(e.target.value) || 3.67)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            placeholder="3.67"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Current rate: 1 USD = {local.usdToAed || 3.67} AED
+          </p>
+        </div>
+
+        <div className="pt-4 border-t border-gray-200">
+          <button
+            onClick={handleSave}
+            disabled={isLoading}
+            className="btn btn-primary"
+          >
+            {isLoading ? (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 mr-2" />
+                Save Changes
+              </>
+            )}
+          </button>
         </div>
       </div>
     </div>

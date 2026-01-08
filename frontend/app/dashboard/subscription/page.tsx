@@ -134,21 +134,6 @@ export default function SubscriptionPage() {
 
 
 
-  // Remove add-on mutation (for existing add-ons only)
-  const removeAddOnMutation = useMutation(
-    (data: { type: 'master' | 'slave'; quantity: number }) => hybridSubscriptionAPI.removeAddOn(data),
-    {
-      onSuccess: () => {
-        invalidateSubscription()
-        queryClient.invalidateQueries('licenseConfig')
-        queryClient.invalidateQueries('accounts')
-        toast.success('Add-on removed successfully!')
-      },
-      onError: (error: any) => {
-        toast.error(error.response?.data?.message || 'Failed to remove add-on')
-      },
-    }
-  )
 
   // Checkout cart state (for new add-ons)
   const [checkoutCart, setCheckoutCart] = useState<{ master: number; slave: number }>({ master: 0, slave: 0 })
@@ -168,6 +153,26 @@ export default function SubscriptionPage() {
   const SLAVE_PRICE = pricingData?.addOnPricing?.slavePrice || 5 // Default: $5/month per slave
   const EA_LICENSE_PRICE = 29 // $29/month
   const FULL_ACCESS_PRICE = 99 // $99/month
+  
+  // Currency conversion rate - use from pricing data if available, otherwise fallback to default
+  const USD_TO_AED = pricingData?.currencyConversion?.usdToAed || 3.67 // Default: 3.67
+  
+  // Helper function to convert USD to AED (rounded to 2 decimals)
+  const convertUsdToAed = (usdAmount: number): number => {
+    return Math.round(usdAmount * USD_TO_AED * 100) / 100
+  }
+  
+  // Helper component to display price in both USD and AED
+  const PriceDisplay = ({ usdPrice, className = '', showAED = true, suffix = '' }: { usdPrice: number; className?: string; showAED?: boolean; suffix?: string }) => {
+    const aedPrice = convertUsdToAed(usdPrice)
+    return (
+      <span className={className}>
+        ${usdPrice.toFixed(2)} USD
+        {showAED && <span className="text-gray-500 text-sm ml-2">≈ {aedPrice.toFixed(2)} AED</span>}
+        {suffix && <span>{suffix}</span>}
+      </span>
+    )
+  }
   
   // Trial config - use from pricing data if available, otherwise fallback to defaults
   const TRIAL_DURATION_DAYS = pricingData?.trial?.durationDays || 3 // Default: 3 days
@@ -486,15 +491,15 @@ export default function SubscriptionPage() {
                     {effectiveDiscount > 0 ? (
                       <>
                         <div className="text-sm text-gray-400 line-through">
-                          ${getTierPrice(selectedTier)}/month
+                          <PriceDisplay usdPrice={getTierPrice(selectedTier)} />/month
                         </div>
                         <div className="text-2xl font-bold text-green-600">
-                          ${applyDiscount(getTierPrice(selectedTier)).toFixed(2)}/month
+                          <PriceDisplay usdPrice={applyDiscount(getTierPrice(selectedTier))} />/month
                         </div>
                       </>
                     ) : (
                       <div className="text-2xl font-bold text-gray-900">
-                        ${getTierPrice(selectedTier)}/month
+                        <PriceDisplay usdPrice={getTierPrice(selectedTier)} />/month
                       </div>
                     )}
                   </div>
@@ -765,6 +770,9 @@ export default function SubscriptionPage() {
 
               <p className="text-xs text-gray-500 text-center">
                 Your subscription and add-ons will be activated after payment confirmation
+              </p>
+              <p className="text-xs text-blue-600 text-center font-medium mt-1">
+                *Final payment will be processed in AED
               </p>
             </div>
           </div>
@@ -1207,50 +1215,22 @@ export default function SubscriptionPage() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {hybridSubscription.additionalMasters > 0 && (
-                  <div className="p-4 bg-white rounded-lg border-2 border-blue-200 shadow-sm hover:shadow-md transition-shadow">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">Additional Masters</p>
-                        <p className="text-lg font-medium text-gray-900">
-                          {hybridSubscription.additionalMasters}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => {
-                          if (window.confirm('Remove 1 additional master account? This will take effect immediately.')) {
-                            removeAddOnMutation.mutate({ type: 'master', quantity: 1 })
-                          }
-                        }}
-                        disabled={removeAddOnMutation.isLoading}
-                        className="p-1.5 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-                        title="Remove 1 Master"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
+                  <div className="p-4 bg-white rounded-lg border-2 border-blue-200 shadow-sm">
+                    <div>
+                      <p className="text-sm text-gray-600 mb-1">Additional Masters</p>
+                      <p className="text-lg font-medium text-gray-900">
+                        {hybridSubscription.additionalMasters}
+                      </p>
                     </div>
                   </div>
                 )}
                 {hybridSubscription.additionalSlaves > 0 && (
-                  <div className="p-4 bg-white rounded-lg border-2 border-blue-200 shadow-sm hover:shadow-md transition-shadow">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">Additional Slaves</p>
-                        <p className="text-lg font-medium text-gray-900">
-                          {hybridSubscription.additionalSlaves}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => {
-                          if (window.confirm('Remove 1 additional slave account? This will take effect immediately.')) {
-                            removeAddOnMutation.mutate({ type: 'slave', quantity: 1 })
-                          }
-                        }}
-                        disabled={removeAddOnMutation.isLoading}
-                        className="p-1.5 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
-                        title="Remove 1 Slave"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
+                  <div className="p-4 bg-white rounded-lg border-2 border-blue-200 shadow-sm">
+                    <div>
+                      <p className="text-sm text-gray-600 mb-1">Additional Slaves</p>
+                      <p className="text-lg font-medium text-gray-900">
+                        {hybridSubscription.additionalSlaves}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -1514,6 +1494,9 @@ export default function SubscriptionPage() {
                 </button>
                 <p className="text-xs text-gray-500 mt-2 text-center">
                   Add-ons will be added to your subscription after payment confirmation
+                </p>
+                <p className="text-xs text-blue-600 mt-1 text-center font-medium">
+                  *Final payment will be processed in AED
                 </p>
               </div>
             )}
