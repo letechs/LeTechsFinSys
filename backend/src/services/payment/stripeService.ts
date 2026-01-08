@@ -225,22 +225,209 @@ export class StripeService implements IPaymentProvider {
   }
 
   /**
+   * Get customer's existing currency from Stripe subscriptions/invoices/schedules/discounts/quotes
+   * Returns 'usd' if customer has existing USD items, otherwise returns 'aed'
+   * Stripe doesn't allow mixing currencies, so we need to check all possible sources
+   */
+  private async getCustomerCurrency(customerId: string): Promise<'usd' | 'aed'> {
+    try {
+      const stripe = this.ensureStripeConfigured();
+      
+      // 1. Check for active subscriptions first (most common case)
+      try {
+        const subscriptions = await stripe.subscriptions.list({
+          customer: customerId,
+          status: 'active',
+          limit: 10,
+        });
+
+        if (subscriptions.data.length > 0) {
+          const subscription = subscriptions.data[0];
+          // Check if subscription is actually active (not expired)
+          const periodEnd = (subscription as any).current_period_end;
+          if (periodEnd) {
+            const expiryDate = new Date(periodEnd * 1000);
+            const now = new Date();
+            // If subscription expired, don't use its currency (user can checkout in AED)
+            if (expiryDate < now) {
+              logger.info(`Customer ${customerId} has expired subscription - can use AED`);
+              // Check if grace period ended - if so, user can checkout in AED
+              const globalConfig = await globalConfigService.getConfig();
+              const gracePeriodDays = globalConfig.gracePeriod.days;
+              const gracePeriodEnd = new Date(expiryDate.getTime() + gracePeriodDays * 24 * 60 * 60 * 1000);
+              if (now > gracePeriodEnd) {
+                logger.info(`Customer ${customerId} grace period ended - can checkout in AED`);
+                return 'aed';
+              }
+            }
+          }
+          const currency = (subscription.items.data[0]?.price?.currency || 'usd').toLowerCase();
+          logger.info(`Customer ${customerId} has active ${currency.toUpperCase()} subscriptions`);
+          return currency === 'usd' ? 'usd' : 'aed';
+        }
+      } catch (error: any) {
+        logger.warn(`Error checking active subscriptions: ${error.message}`);
+      }
+
+      // 2. Check for subscription schedules
+      try {
+        const schedules = await stripe.subscriptionSchedules.list({
+          customer: customerId,
+          limit: 10,
+        });
+
+        if (schedules.data.length > 0) {
+          const schedule = schedules.data[0];
+          // Get currency from the subscription associated with the schedule
+          if (schedule.subscription) {
+            const sub = await stripe.subscriptions.retrieve(schedule.subscription as string);
+            const currency = (sub.items.data[0]?.price?.currency || 'usd').toLowerCase();
+            logger.info(`Customer ${customerId} has ${currency.toUpperCase()} subscription schedule`);
+            return currency === 'usd' ? 'usd' : 'aed';
+          }
+        }
+      } catch (error: any) {
+        logger.warn(`Error checking subscription schedules: ${error.message}`);
+      }
+
+      // 3. Check for any subscriptions (including past ones)
+      try {
+        const allSubscriptions = await stripe.subscriptions.list({
+          customer: customerId,
+          limit: 10,
+        });
+
+        if (allSubscriptions.data.length > 0) {
+          const subscription = allSubscriptions.data[0];
+          const currency = (subscription.items.data[0]?.price?.currency || 'usd').toLowerCase();
+          logger.info(`Customer ${customerId} has historical ${currency.toUpperCase()} subscriptions`);
+          return currency === 'usd' ? 'usd' : 'aed';
+        }
+      } catch (error: any) {
+        logger.warn(`Error checking all subscriptions: ${error.message}`);
+      }
+
+      // 4. Check for customer discounts (can be currency-specific)
+      try {
+        const customer = await stripe.customers.retrieve(customerId);
+        if (customer && typeof customer === 'object' && 'discount' in customer && customer.discount) {
+          // Discount exists, check if it's associated with a subscription
+          // If customer has a discount, they likely have USD subscriptions
+          logger.info(`Customer ${customerId} has active discount - assuming USD`);
+          return 'usd';
+        }
+      } catch (error: any) {
+        logger.warn(`Error checking customer discounts: ${error.message}`);
+      }
+
+      // 5. Check for quotes
+      try {
+        const quotes = await stripe.quotes.list({
+          customer: customerId,
+          limit: 10,
+        });
+
+        if (quotes.data.length > 0) {
+          const quote = quotes.data[0];
+          const currency = (quote.currency || 'usd').toLowerCase();
+          logger.info(`Customer ${customerId} has ${currency.toUpperCase()} quotes`);
+          return currency === 'usd' ? 'usd' : 'aed';
+        }
+      } catch (error: any) {
+        logger.warn(`Error checking quotes: ${error.message}`);
+      }
+
+      // 6. Check invoices as fallback
+      try {
+        const invoices = await stripe.invoices.list({
+          customer: customerId,
+          limit: 10,
+        });
+
+        if (invoices.data.length > 0) {
+          const invoice = invoices.data[0];
+          const currency = (invoice.currency || 'usd').toLowerCase();
+          logger.info(`Customer ${customerId} has ${currency.toUpperCase()} invoices`);
+          return currency === 'usd' ? 'usd' : 'aed';
+        }
+      } catch (error: any) {
+        logger.warn(`Error checking invoices: ${error.message}`);
+      }
+
+      // 7. Check for invoice items (one-time charges)
+      try {
+        const invoiceItems = await stripe.invoiceItems.list({
+          customer: customerId,
+          limit: 10,
+        });
+
+        if (invoiceItems.data.length > 0) {
+          const invoiceItem = invoiceItems.data[0];
+          const currency = (invoiceItem.currency || 'usd').toLowerCase();
+          logger.info(`Customer ${customerId} has ${currency.toUpperCase()} invoice items`);
+          return currency === 'usd' ? 'usd' : 'aed';
+        }
+      } catch (error: any) {
+        logger.warn(`Error checking invoice items: ${error.message}`);
+      }
+
+      // Default to AED for new customers
+      logger.info(`Customer ${customerId} has no existing currency items - using AED`);
+      return 'aed';
+    } catch (error: any) {
+      logger.error(`Error checking customer currency for ${customerId}: ${error.message}`);
+      // If we can't determine, default to USD to be safe (existing customers likely have USD)
+      // This prevents errors but may not be ideal - admin should migrate these customers
+      return 'usd';
+    }
+  }
+
+  /**
    * Create checkout session with dynamic pricing
    * Supports custom amounts with discounts applied
    */
   async createCheckoutSession(data: CheckoutData): Promise<CheckoutSession> {
+    // Declare variables outside try block for error handling
+    let customerId: string = '';
+    let checkoutCurrency: 'usd' | 'aed' = 'aed';
+    let USD_TO_AED = 3.67;
+    let MASTER_PRICE = 10;
+    let SLAVE_PRICE = 5;
+    const EA_LICENSE_PRICE = 29;
+    const FULL_ACCESS_PRICE = 99;
+    
     try {
-      const customerId = await this.getOrCreateCustomer(data.userId, data.email);
+      customerId = await this.getOrCreateCustomer(data.userId, data.email);
+      
+      if (!customerId) {
+        throw new Error('Failed to get or create customer');
+      }
+
+      // Check customer's existing currency to avoid mixing currencies error
+      const customerCurrency = await this.getCustomerCurrency(customerId);
+      logger.info(`Using currency: ${customerCurrency.toUpperCase()} for customer ${customerId}`);
 
       // Build line items with dynamic pricing
       const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
 
       // Get prices from global configuration (not hardcoded)
       const globalConfig = await globalConfigService.getConfig();
-      const MASTER_PRICE = globalConfig.addOnPricing?.masterPrice ?? 10; // Default to $10/month if not configured
-      const SLAVE_PRICE = globalConfig.addOnPricing?.slavePrice ?? 5; // Default to $5/month if not configured
-      const EA_LICENSE_PRICE = 29; // $29/month (can be moved to config later if needed)
-      const FULL_ACCESS_PRICE = 99; // $99/month (can be moved to config later if needed)
+      MASTER_PRICE = globalConfig.addOnPricing?.masterPrice ?? 10; // Default to $10/month if not configured
+      SLAVE_PRICE = globalConfig.addOnPricing?.slavePrice ?? 5; // Default to $5/month if not configured
+      
+      // Get USD to AED conversion rate (default: 3.67)
+      USD_TO_AED = globalConfig.currencyConversion?.usdToAed ?? 3.67;
+      
+      // Helper function to convert USD to AED (in cents/fils)
+      const convertUsdToAed = (usdAmount: number): number => {
+        return Math.round(usdAmount * USD_TO_AED * 100);
+      };
+      
+      // Determine which currency to use based on customer's existing subscriptions
+      checkoutCurrency = customerCurrency;
+      
+      // Log currency decision for debugging
+      logger.info(`[CHECKOUT] Customer ${customerId} - Using ${checkoutCurrency.toUpperCase()} currency for checkout`);
 
       // Add subscription tier if provided (with dynamic pricing)
       if (data.tier) {
@@ -267,13 +454,18 @@ export class StripeService implements IPaymentProvider {
           }
           
           // Apply discount if provided
-          const finalPrice = data.discountPercentage && data.discountPercentage > 0
-            ? Math.round(adjustedPrice * (1 - data.discountPercentage / 100) * 100) // Convert to cents
-            : Math.round(adjustedPrice * 100);
+          const finalPriceUsd = data.discountPercentage && data.discountPercentage > 0
+            ? adjustedPrice * (1 - data.discountPercentage / 100)
+            : adjustedPrice;
+          
+          // Convert to target currency
+          const finalPrice = checkoutCurrency === 'aed' 
+            ? convertUsdToAed(finalPriceUsd)
+            : Math.round(finalPriceUsd * 100); // USD in cents
 
           lineItems.push({
             price_data: {
-              currency: 'usd',
+              currency: checkoutCurrency,
               product_data: {
                 name: `${data.tier === 'EA_LICENSE' ? 'EA License' : 'Full Access'} Subscription`,
                 description: `${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'} subscription for ${data.tier === 'EA_LICENSE' ? 'EA License' : 'Full Access'} tier`,
@@ -291,19 +483,25 @@ export class StripeService implements IPaymentProvider {
       // Add add-ons if provided (with dynamic pricing)
       if (data.addOns) {
         if (data.addOns.masters && data.addOns.masters > 0) {
-          const basePrice = MASTER_PRICE * data.addOns.masters;
-          const finalPrice = data.discountPercentage && data.discountPercentage > 0
-            ? Math.round(basePrice * (1 - data.discountPercentage / 100) * 100)
-            : basePrice * 100;
+          const basePriceUsd = MASTER_PRICE * data.addOns.masters;
+          const finalPriceUsd = data.discountPercentage && data.discountPercentage > 0
+            ? basePriceUsd * (1 - data.discountPercentage / 100)
+            : basePriceUsd;
+          
+          // Convert to target currency (total, then divide by quantity for per-unit price)
+          const totalPrice = checkoutCurrency === 'aed'
+            ? convertUsdToAed(finalPriceUsd)
+            : Math.round(finalPriceUsd * 100); // USD in cents
+          const pricePerUnit = Math.round(totalPrice / data.addOns.masters);
 
           lineItems.push({
             price_data: {
-              currency: 'usd',
+              currency: checkoutCurrency,
               product_data: {
                 name: 'Additional Master Account' + (data.addOns.masters > 1 ? `s (${data.addOns.masters})` : ''),
                 description: `Additional master account${data.addOns.masters > 1 ? 's' : ''} - Monthly recurring`,
               },
-              unit_amount: Math.round(finalPrice / data.addOns.masters), // Price per unit
+              unit_amount: pricePerUnit,
               recurring: {
                 interval: 'month',
               },
@@ -313,19 +511,25 @@ export class StripeService implements IPaymentProvider {
         }
 
         if (data.addOns.slaves && data.addOns.slaves > 0) {
-          const basePrice = SLAVE_PRICE * data.addOns.slaves;
-          const finalPrice = data.discountPercentage && data.discountPercentage > 0
-            ? Math.round(basePrice * (1 - data.discountPercentage / 100) * 100)
-            : basePrice * 100;
+          const basePriceUsd = SLAVE_PRICE * data.addOns.slaves;
+          const finalPriceUsd = data.discountPercentage && data.discountPercentage > 0
+            ? basePriceUsd * (1 - data.discountPercentage / 100)
+            : basePriceUsd;
+          
+          // Convert to target currency (total, then divide by quantity for per-unit price)
+          const totalPrice = checkoutCurrency === 'aed'
+            ? convertUsdToAed(finalPriceUsd)
+            : Math.round(finalPriceUsd * 100); // USD in cents
+          const pricePerUnit = Math.round(totalPrice / data.addOns.slaves);
 
           lineItems.push({
             price_data: {
-              currency: 'usd',
+              currency: checkoutCurrency,
               product_data: {
                 name: 'Additional Slave Account' + (data.addOns.slaves > 1 ? `s (${data.addOns.slaves})` : ''),
                 description: `Additional slave account${data.addOns.slaves > 1 ? 's' : ''} - Monthly recurring`,
               },
-              unit_amount: Math.round(finalPrice / data.addOns.slaves), // Price per unit
+              unit_amount: pricePerUnit,
               recurring: {
                 interval: 'month',
               },
@@ -370,6 +574,8 @@ export class StripeService implements IPaymentProvider {
           slaves: data.addOns?.slaves?.toString() || '0',
           discountPercentage: data.discountPercentage?.toString() || '0',
           isRenewal: data.metadata?.isRenewal || 'false',
+          usdToAedRate: USD_TO_AED.toString(), // Store conversion rate for reference
+          checkoutCurrency: checkoutCurrency, // Store currency used for this checkout
           ...data.metadata,
         },
         allow_promotion_codes: true, // Allow users to enter promo codes
@@ -383,6 +589,153 @@ export class StripeService implements IPaymentProvider {
         customerId,
       };
     } catch (error: any) {
+      // Check if this is a currency mixing error
+      if (error.message && error.message.includes('cannot combine currencies')) {
+        // Only retry if we have a customerId (it was successfully created)
+        if (!customerId) {
+          logger.error('Currency mixing error but customerId not available');
+          throw new Error(`Failed to create checkout session: ${error.message}`);
+        }
+        
+        logger.warn(`Currency mixing error detected for customer ${customerId}. Retrying with USD...`);
+        
+        // If we tried AED but customer has USD items, retry with USD
+        if (checkoutCurrency === 'aed') {
+          logger.info(`Retrying checkout with USD currency for customer ${customerId}`);
+          
+          // Retry with USD - update all line items to use USD
+          const lineItemsUsd: Stripe.Checkout.SessionCreateParams.LineItem[] = [];
+          
+          // Rebuild line items with USD
+          if (data.tier) {
+            let basePrice = 0;
+            if (data.tier === 'EA_LICENSE') {
+              basePrice = EA_LICENSE_PRICE;
+            } else if (data.tier === 'FULL_ACCESS') {
+              basePrice = FULL_ACCESS_PRICE;
+            }
+
+            if (basePrice > 0) {
+              const billingCycle = (data.metadata?.billingCycle as 'monthly' | 'yearly') || 'monthly';
+              let adjustedPrice = basePrice;
+              if (billingCycle === 'yearly') {
+                if (data.tier === 'EA_LICENSE') {
+                  adjustedPrice = 299 / 12;
+                } else if (data.tier === 'FULL_ACCESS') {
+                  adjustedPrice = 999 / 12;
+                }
+              }
+              
+              const finalPriceUsd = data.discountPercentage && data.discountPercentage > 0
+                ? adjustedPrice * (1 - data.discountPercentage / 100)
+                : adjustedPrice;
+              
+              lineItemsUsd.push({
+                price_data: {
+                  currency: 'usd',
+                  product_data: {
+                    name: `${data.tier === 'EA_LICENSE' ? 'EA License' : 'Full Access'} Subscription`,
+                    description: `${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'} subscription for ${data.tier === 'EA_LICENSE' ? 'EA License' : 'Full Access'} tier`,
+                  },
+                  unit_amount: Math.round(finalPriceUsd * 100),
+                  recurring: {
+                    interval: billingCycle === 'yearly' ? 'year' : 'month',
+                  },
+                },
+                quantity: 1,
+              });
+            }
+          }
+
+          if (data.addOns) {
+            if (data.addOns.masters && data.addOns.masters > 0) {
+              const basePriceUsd = MASTER_PRICE * data.addOns.masters;
+              const finalPriceUsd = data.discountPercentage && data.discountPercentage > 0
+                ? basePriceUsd * (1 - data.discountPercentage / 100)
+                : basePriceUsd;
+              
+              lineItemsUsd.push({
+                price_data: {
+                  currency: 'usd',
+                  product_data: {
+                    name: 'Additional Master Account' + (data.addOns.masters > 1 ? `s (${data.addOns.masters})` : ''),
+                    description: `Additional master account${data.addOns.masters > 1 ? 's' : ''} - Monthly recurring`,
+                  },
+                  unit_amount: Math.round((finalPriceUsd / data.addOns.masters) * 100),
+                  recurring: {
+                    interval: 'month',
+                  },
+                },
+                quantity: data.addOns.masters,
+              });
+            }
+
+            if (data.addOns.slaves && data.addOns.slaves > 0) {
+              const basePriceUsd = SLAVE_PRICE * data.addOns.slaves;
+              const finalPriceUsd = data.discountPercentage && data.discountPercentage > 0
+                ? basePriceUsd * (1 - data.discountPercentage / 100)
+                : basePriceUsd;
+              
+              lineItemsUsd.push({
+                price_data: {
+                  currency: 'usd',
+                  product_data: {
+                    name: 'Additional Slave Account' + (data.addOns.slaves > 1 ? `s (${data.addOns.slaves})` : ''),
+                    description: `Additional slave account${data.addOns.slaves > 1 ? 's' : ''} - Monthly recurring`,
+                  },
+                  unit_amount: Math.round((finalPriceUsd / data.addOns.slaves) * 100),
+                  recurring: {
+                    interval: 'month',
+                  },
+                },
+                quantity: data.addOns.slaves,
+              });
+            }
+          }
+
+          // Retry with USD
+          const stripe = this.ensureStripeConfigured();
+          const hasRecurringItems = lineItemsUsd.some(item => 
+            (item.price_data as any)?.recurring
+          );
+          const hasAddOns = data.addOns && ((data.addOns.masters ?? 0) > 0 || (data.addOns.slaves ?? 0) > 0);
+          const checkoutMode: 'payment' | 'subscription' = (data.tier || hasAddOns || hasRecurringItems) 
+            ? 'subscription' 
+            : 'payment';
+
+          const session = await stripe.checkout.sessions.create({
+            customer: customerId,
+            payment_method_types: ['card'],
+            line_items: lineItemsUsd,
+            mode: checkoutMode,
+            locale: 'auto',
+            success_url: `${config.frontendUrl}/dashboard/subscription?success=true&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${config.frontendUrl}/dashboard/subscription?canceled=true`,
+            metadata: {
+              userId: data.userId,
+              tier: data.tier || '',
+              masters: data.addOns?.masters?.toString() || '0',
+              slaves: data.addOns?.slaves?.toString() || '0',
+              discountPercentage: data.discountPercentage?.toString() || '0',
+              isRenewal: data.metadata?.isRenewal || 'false',
+              usdToAedRate: USD_TO_AED.toString(),
+              checkoutCurrency: 'usd', // Retried with USD
+              currencyRetry: 'true', // Flag to indicate this was a retry
+              ...data.metadata,
+            },
+            allow_promotion_codes: true,
+          });
+
+          logger.info(`Retry successful: Created Stripe checkout session ${session.id} with USD for user ${data.userId}`);
+          
+          return {
+            id: session.id,
+            url: session.url || '',
+            customerId,
+          };
+        }
+      }
+      
       logger.error('Error creating Stripe checkout session:', error);
       throw new Error(`Failed to create checkout session: ${error.message}`);
     }

@@ -115,6 +115,11 @@ export interface IGlobalConfig extends Document {
     defaultSlaves: number;
   };
 
+  // Currency Conversion
+  currencyConversion: {
+    usdToAed: number; // USD to AED conversion rate (default: 3.67)
+  };
+
   // Metadata
   lastUpdated: Date;
   lastUpdatedBy: string; // admin user ID
@@ -218,6 +223,9 @@ const GlobalConfigSchema = new Schema<IGlobalConfig>(
     eaDefaults: {
       defaultMasters: { type: Number, default: 0 },
       defaultSlaves: { type: Number, default: 0 },
+    },
+    currencyConversion: {
+      usdToAed: { type: Number, default: 3.67, min: 0 },
     },
     lastUpdated: { type: Date, default: Date.now },
     lastUpdatedBy: { type: String, required: true },

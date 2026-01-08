@@ -261,6 +261,13 @@ export class GlobalConfigService {
         throw new ValidationError('Default slaves must be >= 0');
       }
     }
+
+    // Validate currency conversion
+    if (updates.currencyConversion) {
+      if (updates.currencyConversion.usdToAed !== undefined && updates.currencyConversion.usdToAed <= 0) {
+        throw new ValidationError('USD to AED conversion rate must be > 0');
+      }
+    }
   }
 
   /**

@@ -20,6 +20,7 @@ export class SubscriptionController {
         success: true,
         data: {
           addOnPricing: config.addOnPricing,
+          currencyConversion: config.currencyConversion,
           trial: {
             durationDays: config.trial.durationDays,
             masters: config.trial.masters,

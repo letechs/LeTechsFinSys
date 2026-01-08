@@ -758,17 +758,27 @@ export class PaymentController {
           await subscriptionService.updateRenewalDate(userId, result.renewalDate);
         }
       } else if (event.type === 'customer.subscription.deleted') {
-        // Subscription cancelled - don't remove tier immediately, let it expire naturally
+        // Subscription cancelled/deleted - process grace period and move to BASIC after grace period
+        logger.info(`Subscription deleted for user ${userId}, processing grace period...`);
+        
+        // Process grace period - this will move user to BASIC tier after grace period ends
+        // If grace period already ended, it will move immediately
+        try {
+          await subscriptionService.processGracePeriod(userId);
+        } catch (error: any) {
+          logger.error(`Error processing grace period for user ${userId}: ${error.message}`);
+          // Don't throw - continue with history logging
+        }
+        
         await HistoryService.createEntry({
           userId,
           actionType: 'subscription_cancelled',
-          description: 'Subscription cancelled via Stripe',
+          description: 'Subscription cancelled/deleted via Stripe - will move to BASIC tier after grace period',
           metadata: {
             subscriptionId,
             customerId,
             source: 'stripe_webhook',
           },
-          // Don't set performedBy for system actions - leave undefined
         });
       }
 

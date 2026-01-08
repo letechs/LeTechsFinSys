@@ -47,6 +47,7 @@ export class ConfigController {
         'globalOffers',
         'addOnPricing',
         'eaDefaults',
+        'currencyConversion',
       ];
 
       if (!validSections.includes(section)) {
@@ -132,6 +133,7 @@ export class ConfigController {
         'globalOffers',
         'addOnPricing',
         'eaDefaults',
+        'currencyConversion',
       ];
 
       if (!validSections.includes(section)) {
